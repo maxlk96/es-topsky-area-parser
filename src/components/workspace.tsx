@@ -23,6 +23,7 @@ import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { amdtSupUrl } from "@/lib/aip/amdt";
+import { subjectLooksUas } from "@/lib/aip/sup-catalogue";
 import { diffCandidates } from "@/lib/areas/diff";
 import { parseTopSkyBuffer, parseTopSkyText } from "@/lib/areas/parse-topsky";
 import { encodeLatin1, mergeTempoSection } from "@/lib/areas/write-topsky";
@@ -169,12 +170,27 @@ export function Workspace() {
       if (!res.ok) throw new Error(data.error || "SUP catalogue failed");
       const list: SupCatalogueRow[] = data.areaSups?.length ? data.areaSups : data.sups;
       setSups(list);
+      // Auto-check all likely-area SUPs except those whose subject already says UAS/UAV.
+      // Newest first comes from the catalogue sort — do not slice to an arbitrary top-N
+      // (that used to skip recent military R/D like 185/2026 and 191/2026).
       const sel: Record<string, boolean> = {};
-      for (const s of list.filter((x: SupCatalogueRow) => x.likelyArea).slice(0, 12)) {
+      let auto = 0;
+      let skippedUasSubject = 0;
+      for (const s of list.filter((x: SupCatalogueRow) => x.likelyArea)) {
+        if (subjectLooksUas(s.subject)) {
+          skippedUasSubject += 1;
+          continue;
+        }
         sel[s.href] = true;
+        auto += 1;
       }
       setSelectedSups(sel);
-      toast.success(`${list.filter((s) => s.likelyArea).length} likely area SUPs`);
+      const likely = list.filter((s) => s.likelyArea).length;
+      toast.success(
+        skippedUasSubject
+          ? `${likely} area SUPs · auto-selected ${auto} (skipped ${skippedUasSubject} UAS-titled)`
+          : `${likely} area SUPs · auto-selected ${auto}`,
+      );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Scan failed");
     } finally {

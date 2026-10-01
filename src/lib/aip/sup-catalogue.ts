@@ -3,8 +3,28 @@ import type { SupCatalogueRow } from "@/lib/areas/types";
 const AREA_SUBJECT =
   /temporary\s+(restricted|danger)\s+area|tillfälligt\s+(restriktions|farligt)\s*område|\bESR\d|\bESD\d/i;
 
+/** Subject-line hint only — real UAS-only exclusion happens when parsing the SUP body. */
+const UAS_SUBJECT = /\bUAS\b|\bUAV\b|\bBVLOS\b|\bRPAS\b/i;
+
 function clean(s: string): string {
   return s.replace(/\\n/g, " ").replace(/\\t/g, " ").replace(/\s+/g, " ").trim();
+}
+
+/** Parse "185/2026" → sortable [year, serial]; unknown → [0,0]. */
+export function supNumberKey(number: string): [number, number] {
+  const m = String(number).match(/(\d+)\s*[/-]\s*(\d+)/);
+  if (!m) return [0, 0];
+  const a = Number(m[1]);
+  const b = Number(m[2]);
+  // AIP SUP N/YYYY
+  if (b >= 2000) return [b, a];
+  // rare YYYY/N
+  if (a >= 2000) return [a, b];
+  return [b, a];
+}
+
+export function subjectLooksUas(subject: string): boolean {
+  return UAS_SUBJECT.test(subject);
 }
 
 /** Parse SUP rows from LFV datasource.js object literals. */
@@ -67,5 +87,12 @@ export function parseDatasourceSups(jsText: string): SupCatalogueRow[] {
     }
   }
 
-  return rows.sort((a, b) => Number(b.likelyArea) - Number(a.likelyArea));
+  return rows.sort((a, b) => {
+    const area = Number(b.likelyArea) - Number(a.likelyArea);
+    if (area !== 0) return area;
+    const [ay, an] = supNumberKey(a.number);
+    const [by, bn] = supNumberKey(b.number);
+    if (by !== ay) return by - ay;
+    return bn - an;
+  });
 }
