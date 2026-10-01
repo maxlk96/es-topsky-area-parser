@@ -1,7 +1,7 @@
 import type { AreaCategory, AreaRecord } from "./types";
 
-/** Map layer keys used by toggles (ATS splits out of OTHER). */
-export type LayerKey = AreaCategory | "ATS";
+/** Map layer keys used by toggles (splits PCA sub-parts and ATS out of coarse categories). */
+export type LayerKey = AreaCategory | "ATS" | "PCA_SUB";
 
 export type LayerVisibility = Record<LayerKey, boolean>;
 
@@ -13,11 +13,12 @@ export const DEFAULT_LAYER_VISIBILITY: LayerVisibility = {
   TRA: false,
   CBA: false,
   PCA: false,
+  PCA_SUB: false,
   ATS: false,
   OTHER: false,
 };
 
-export type LayerGroupId = "rd" | "tra_cba" | "pca" | "ats" | "other";
+export type LayerGroupId = "rd" | "tra_cba" | "pca" | "other";
 
 export interface LayerToggle {
   key: LayerKey;
@@ -54,20 +55,20 @@ export const LAYER_GROUPS: LayerGroup[] = [
   {
     id: "pca",
     title: "PCA",
-    hint: "vatiris PCA + sub-parts",
-    toggles: [{ key: "PCA", label: "PCA" }],
-  },
-  {
-    id: "ats",
-    title: "ATS volumes",
-    hint: "CTR / TMA-open style volumes",
-    toggles: [{ key: "ATS", label: "CTR / TMA" }],
+    hint: "vatiris PCA",
+    toggles: [
+      { key: "PCA", label: "PCA" },
+      { key: "PCA_SUB", label: "PCA sub-parts" },
+    ],
   },
   {
     id: "other",
     title: "Other / system",
-    hint: "TCT, STCA, FS, SKOL, TEKVA, …",
-    toggles: [{ key: "OTHER", label: "TCT / STCA / FS…" }],
+    hint: "TCT, STCA, FS, SKOL, TEKVA, ATS volumes, …",
+    toggles: [
+      { key: "OTHER", label: "TCT / STCA / FS…" },
+      { key: "ATS", label: "ATS volumes (CTR / TMA)" },
+    ],
   },
 ];
 
@@ -80,7 +81,22 @@ export function isAtsVolume(
   return /\b(CTR|TMA|CTA|FIZ|ATZ|TIZ|RMZ|TMZ)\b/.test(t);
 }
 
+/**
+ * vatiris PCA sub-parts: letter + 2+ digit code (A11, I61, M12).
+ * Main PCA: letter + single digit (A1, B1, G9, M5).
+ */
+export function isPcaSubPart(
+  area: Pick<AreaRecord, "shortName" | "category">,
+): boolean {
+  if (area.category !== "PCA") return false;
+  const s = area.shortName.trim().toUpperCase().replace(/\s+/g, "");
+  return /^[A-Z]+\d{2,}$/.test(s);
+}
+
 export function layerKeyFor(area: AreaRecord): LayerKey {
+  if (area.category === "PCA") {
+    return isPcaSubPart(area) ? "PCA_SUB" : "PCA";
+  }
   if (area.category === "OTHER" && isAtsVolume(area)) return "ATS";
   return area.category;
 }
@@ -100,6 +116,7 @@ export function countByLayerKey(areas: AreaRecord[]): Record<LayerKey, number> {
     TRA: 0,
     CBA: 0,
     PCA: 0,
+    PCA_SUB: 0,
     ATS: 0,
     OTHER: 0,
   };
