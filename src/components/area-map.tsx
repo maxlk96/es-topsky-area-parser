@@ -49,7 +49,7 @@ function toFeatureCollection(areas: AreaRecord[], role: Role) {
           },
           geometry: {
             type: "Polygon" as const,
-            coordinates: [a.coordinates],
+            coordinates: [closeRing(a.coordinates)],
           },
         };
       }),
