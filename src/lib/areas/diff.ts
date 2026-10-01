@@ -7,12 +7,126 @@ import { normalizeDesignator } from "./names";
 import type { AreaRecord, DiffItem } from "./types";
 import { isExpired, isUpcoming } from "./validity";
 
-function fingerprint(area: AreaRecord): string {
-  const coords = area.coordinates
-    .map(([lon, lat]) => `${lat.toFixed(5)},${lon.toFixed(5)}`)
-    .join("|");
-  const lim = area.limits ? `${area.limits[0]}:${area.limits[1]}` : "-";
-  return `${normalizeDesignator(area.id)}|${lim}|${coords}`;
+/** ~100 m — AIP compact seconds vs TopSky sub-second noise. */
+const COORD_TOLERANCE_NM = 0.055;
+
+function openRing(coords: [number, number][]): [number, number][] {
+  if (coords.length < 2) return coords;
+  const [fLon, fLat] = coords[0];
+  const [lLon, lLat] = coords[coords.length - 1];
+  if (Math.abs(fLon - lLon) < 1e-9 && Math.abs(fLat - lLat) < 1e-9) {
+    return coords.slice(0, -1);
+  }
+  return coords;
+}
+
+function haversineNm(a: [number, number], b: [number, number]): number {
+  const R = 3440.065;
+  const toR = (d: number) => (d * Math.PI) / 180;
+  const dlat = toR(b[1] - a[1]);
+  const dlon = toR(b[0] - a[0]);
+  const x =
+    Math.sin(dlat / 2) ** 2 +
+    Math.cos(toR(a[1])) * Math.cos(toR(b[1])) * Math.sin(dlon / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(x)));
+}
+
+function limitsKey(area: AreaRecord): string {
+  return area.limits ? `${area.limits[0]}:${area.limits[1]}` : "-";
+}
+
+function circlesMatch(
+  a?: AreaRecord["boundCircle"],
+  b?: AreaRecord["boundCircle"],
+): boolean | undefined {
+  if (!a || !b) return undefined;
+  const centerNm = haversineNm([a.lon, a.lat], [b.lon, b.lat]);
+  const radiusDiff = Math.abs(a.radiusNm - b.radiusNm);
+  return centerNm <= COORD_TOLERANCE_NM && radiusDiff <= 0.03;
+}
+
+/**
+ * Compare existing TopSky vs AIP candidate. Returns human-readable change reasons.
+ * Close-ring duplicates and sub-tolerance vertex noise are ignored.
+ */
+export function explainAreaChanges(
+  existing: AreaRecord,
+  candidate: AreaRecord,
+): string[] {
+  const reasons: string[] = [];
+
+  const limEx = limitsKey(existing);
+  const limCand = limitsKey(candidate);
+  if (limEx !== limCand) {
+    reasons.push(`LIMITS ${limEx} → ${limCand}`);
+  }
+
+  const nameEx = (existing.name || "").toLocaleUpperCase("sv-SE");
+  const nameCand = (candidate.name || "").toLocaleUpperCase("sv-SE");
+  if (nameEx && nameCand && nameEx !== nameCand) {
+    reasons.push(`Name ${existing.name} → ${candidate.name}`);
+  }
+
+  const circleEq = circlesMatch(existing.boundCircle, candidate.boundCircle);
+  if (circleEq === true) {
+    // Densified rings may differ; circle definition matches.
+    return reasons;
+  }
+  if (circleEq === false) {
+    const a = existing.boundCircle!;
+    const b = candidate.boundCircle!;
+    reasons.push(
+      `Circle r ${a.radiusNm.toFixed(2)} NM → ${b.radiusNm.toFixed(2)} NM` +
+        (haversineNm([a.lon, a.lat], [b.lon, b.lat]) > COORD_TOLERANCE_NM
+          ? " (centre moved)"
+          : ""),
+    );
+    return reasons;
+  }
+
+  const ringA = openRing(existing.coordinates);
+  const ringB = openRing(candidate.coordinates);
+  if (ringA.length !== ringB.length) {
+    reasons.push(`Coords ${ringA.length} → ${ringB.length} vertices`);
+    return reasons;
+  }
+  if (ringA.length === 0) return reasons;
+
+  let maxNm = 0;
+  for (let i = 0; i < ringA.length; i++) {
+    maxNm = Math.max(maxNm, haversineNm(ringA[i], ringB[i]));
+  }
+  if (maxNm > COORD_TOLERANCE_NM) {
+    if (maxNm < 1) {
+      reasons.push(`Geometry shift ~${Math.round(maxNm * 1852)} m`);
+    } else {
+      reasons.push(`Geometry shift ~${maxNm.toFixed(1)} NM`);
+    }
+  }
+  return reasons;
+}
+
+export function areasEquivalent(existing: AreaRecord, candidate: AreaRecord): boolean {
+  return explainAreaChanges(existing, candidate).length === 0;
+}
+
+const DIFF_STATUS_ORDER: Record<string, number> = {
+  changed: 0,
+  new: 1,
+  excluded: 2,
+  expired: 3,
+  duplicate_of_sup: 4,
+  present: 5,
+};
+
+/** Put actionable rows first so AIP reload noise (present) sinks. */
+export function sortDiffItems(items: DiffItem[]): DiffItem[] {
+  return [...items].sort((a, b) => {
+    const oa = DIFF_STATUS_ORDER[a.status] ?? 9;
+    const ob = DIFF_STATUS_ORDER[b.status] ?? 9;
+    if (oa !== ob) return oa - ob;
+    return a.candidate.id.localeCompare(b.candidate.id);
+  });
 }
 
 export function diffCandidates(
@@ -79,14 +193,26 @@ export function diffCandidates(
     }
     if (normalized.provenance.source === "enr51") {
       notes.push("ENR 5.1 permanent");
+    } else if (normalized.provenance.source === "sup") {
+      notes.push(
+        normalized.provenance.supNumber
+          ? `SUP ${normalized.provenance.supNumber}`
+          : "AIP SUP",
+      );
     }
 
     const ex = byId.get(candId);
     if (!ex) {
-      items.push({ status: "new", candidate: normalized, notes });
+      items.push({
+        status: "new",
+        candidate: normalized,
+        notes: [...notes, "Not in loaded TopSky baseline"],
+      });
       continue;
     }
-    if (fingerprint(ex) === fingerprint(normalized)) {
+
+    const changeReasons = explainAreaChanges(ex, normalized);
+    if (changeReasons.length === 0) {
       items.push({
         status: "present",
         candidate: normalized,
@@ -94,19 +220,12 @@ export function diffCandidates(
         notes: notes.length ? notes : ["Match within tolerance"],
       });
     } else {
-      if (
-        ex.limits &&
-        normalized.limits &&
-        ex.limits.join(":") !== normalized.limits.join(":")
-      ) {
-        notes.push(`LIMITS ${ex.limits.join(":")} → ${normalized.limits.join(":")}`);
-      }
-      if (ex.coordinates.length !== normalized.coordinates.length) {
-        notes.push(
-          `Coord count ${ex.coordinates.length} → ${normalized.coordinates.length}`,
-        );
-      }
-      items.push({ status: "changed", candidate: normalized, existing: ex, notes });
+      items.push({
+        status: "changed",
+        candidate: normalized,
+        existing: ex,
+        notes: [...notes, ...changeReasons],
+      });
     }
   }
   return items;

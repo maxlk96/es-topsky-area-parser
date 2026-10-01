@@ -22,7 +22,15 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { diffCandidates } from "@/lib/areas/diff";
+import {
+  CIRCLE_SPACING_PRESETS,
+  circleStepCount,
+  clampCircleSpacing,
+  defaultSpacingForRadius,
+  inferSpacingFromRing,
+  redensifyBoundCircle,
+} from "@/lib/areas/coords";
+import { diffCandidates, sortDiffItems } from "@/lib/areas/diff";
 import { mentionsUasActivity } from "@/lib/areas/classify";
 import { parseTopSkyBuffer } from "@/lib/areas/parse-topsky";
 import {
@@ -378,7 +386,7 @@ export function Workspace() {
         ),
       );
       const items = diffCandidates(areas, found);
-      setDiffs(items);
+      setDiffs(sortDiffItems(items));
       toast.success(`Parsed ${found.length} candidate areas → ${items.length} diff rows`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Parse failed");
@@ -419,10 +427,14 @@ export function Workspace() {
             (a.coordinates.length >= 3 || a.boundCircle),
         ),
       );
-      const items = diffCandidates(areas, all);
+      const items = sortDiffItems(diffCandidates(areas, all));
       setDiffs(items);
+      const nChanged = items.filter((i) => i.status === "changed").length;
+      const nNew = items.filter((i) => i.status === "new").length;
+      const nEx = items.filter((i) => i.status === "excluded").length;
       toast.success(
-        `AIP reload: ENR 5.1 ${data.enr51Count} · SUPs ${data.supParsed} → ${items.length} diff rows` +
+        `AIP reload: ${nChanged} changed · ${nNew} new · ${nEx} excluded` +
+          ` (ENR ${data.enr51Count} · SUPs ${data.supParsed})` +
           (data.skippedUasSubject
             ? ` · skipped ${data.skippedUasSubject} UAS subject`
             : ""),
@@ -447,18 +459,50 @@ export function Workspace() {
       const idx = next.findIndex(
         (a) => a.id.toUpperCase() === item.candidate.id.toUpperCase(),
       );
-      const accepted: AreaRecord = {
+      let accepted: AreaRecord = {
         ...item.candidate,
         // Preserve ENR permanent vs tempo SUP section — never force OTHER into tempo.
         section: item.candidate.section ?? "tempo",
         mapDefaultVisible: true,
       };
+      // Circles: keep BOUND:C and densify at ESAA Spacing° (tweakable after Accept).
+      if (accepted.boundCircle) {
+        const spacing =
+          accepted.circleSpacingDeg ??
+          defaultSpacingForRadius(accepted.boundCircle.radiusNm);
+        const red = redensifyBoundCircle(accepted.boundCircle, spacing);
+        accepted = {
+          ...accepted,
+          coordinates: red.coordinates,
+          circleSpacingDeg: red.circleSpacingDeg,
+          rawBlock: "",
+        };
+      }
       if (idx >= 0) next[idx] = accepted;
       else next.unshift(accepted);
       return next;
     });
     setDiffs((d) => d.filter((x) => x.candidate.id !== item.candidate.id));
     toast.success(`Accepted ${item.candidate.id}`);
+  };
+
+  const applyCircleSpacing = (fid: string, spacingDeg: number) => {
+    setAreas((prev) =>
+      prev.map((a) => {
+        if (areaFeatureId(a) !== fid || !a.boundCircle) return a;
+        const red = redensifyBoundCircle(a.boundCircle, spacingDeg);
+        return {
+          ...a,
+          coordinates: red.coordinates,
+          circleSpacingDeg: red.circleSpacingDeg,
+          // Force rewrite of geometry on export (rawBlock would preserve old ring).
+          rawBlock: "",
+        };
+      }),
+    );
+    toast.success(
+      `Circle ring → ${circleStepCount(spacingDeg)} steps (${clampCircleSpacing(spacingDeg).toFixed(1)}°)`,
+    );
   };
 
   const acceptAllDiffs = () => {
@@ -486,11 +530,23 @@ export function Workspace() {
         const idx = next.findIndex(
           (a) => a.id.toUpperCase() === item.candidate.id.toUpperCase(),
         );
-        const accepted: AreaRecord = {
+        let accepted: AreaRecord = {
           ...item.candidate,
           section: item.candidate.section ?? "tempo",
           mapDefaultVisible: true,
         };
+        if (accepted.boundCircle) {
+          const spacing =
+            accepted.circleSpacingDeg ??
+            defaultSpacingForRadius(accepted.boundCircle.radiusNm);
+          const red = redensifyBoundCircle(accepted.boundCircle, spacing);
+          accepted = {
+            ...accepted,
+            coordinates: red.coordinates,
+            circleSpacingDeg: red.circleSpacingDeg,
+            rawBlock: "",
+          };
+        }
         if (idx >= 0) next[idx] = accepted;
         else next.unshift(accepted);
       }
@@ -919,6 +975,79 @@ export function Workspace() {
               </p>
             )}
           </div>
+          {(() => {
+            const sel = areas.find((a) => areaFeatureId(a) === selectedKey);
+            if (!sel?.boundCircle) return null;
+            const spacing =
+              sel.circleSpacingDeg ??
+              inferSpacingFromRing(sel.coordinates) ??
+              defaultSpacingForRadius(sel.boundCircle.radiusNm);
+            const steps = circleStepCount(spacing);
+            return (
+              <div className="rounded-md border border-slate-200 bg-white px-2 py-2">
+                <p className="text-xs font-semibold text-slate-800">Circle ring</p>
+                <p className="text-[10px] leading-snug text-slate-500">
+                  {sel.id} · r {sel.boundCircle.radiusNm.toFixed(2)} NM ·{" "}
+                  <span className="font-medium text-slate-700">
+                    {steps} steps ({spacing.toFixed(1)}°)
+                  </span>
+                  . Tweak Spacing° (TopSky COORD_CIRCLE) then export.
+                </p>
+                <div className="mt-1.5 flex flex-wrap gap-1">
+                  {CIRCLE_SPACING_PRESETS.map((p) => (
+                    <Button
+                      key={p}
+                      type="button"
+                      size="sm"
+                      variant={Math.abs(spacing - p) < 0.05 ? "default" : "outline"}
+                      className="h-7 px-2 text-[11px]"
+                      onClick={() => applyCircleSpacing(areaFeatureId(sel), p)}
+                      title={`${circleStepCount(p)} vertices`}
+                    >
+                      {p}°
+                    </Button>
+                  ))}
+                </div>
+                <div className="mt-1.5 flex items-center gap-2">
+                  <Label htmlFor="circle-spacing" className="text-[10px] text-slate-500">
+                    Custom °
+                  </Label>
+                  <Input
+                    id="circle-spacing"
+                    type="number"
+                    min={0.1}
+                    max={120}
+                    step={0.5}
+                    defaultValue={Number(spacing.toFixed(1))}
+                    key={`${sel.id}-${spacing.toFixed(1)}`}
+                    className="h-7 w-20 text-xs"
+                    onKeyDown={(e) => {
+                      if (e.key !== "Enter") return;
+                      const v = Number((e.target as HTMLInputElement).value);
+                      if (!Number.isFinite(v)) return;
+                      applyCircleSpacing(areaFeatureId(sel), v);
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    className="h-7 px-2 text-[11px]"
+                    onClick={() => {
+                      const el = document.getElementById(
+                        "circle-spacing",
+                      ) as HTMLInputElement | null;
+                      const v = Number(el?.value);
+                      if (!Number.isFinite(v)) return;
+                      applyCircleSpacing(areaFeatureId(sel), v);
+                    }}
+                  >
+                    Apply
+                  </Button>
+                </div>
+              </div>
+            );
+          })()}
           <div className="min-w-0 overflow-x-hidden rounded-md border border-slate-200 bg-white px-2 py-2">
             <button
               type="button"
@@ -1161,23 +1290,36 @@ export function Workspace() {
             </div>
 
             <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-hidden">
-          <div className="flex shrink-0 items-center justify-between gap-2">
-            <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-              Verify / diff
-            </p>
-            <Button
-              type="button"
-              size="sm"
-              variant="secondary"
-              className="h-7 px-2 text-xs"
-              disabled={
-                !diffs.some((d) => d.status === "new" || d.status === "changed")
-              }
-              onClick={acceptAllDiffs}
-              title="Accept all new and changed candidates"
-            >
-              Accept all
-            </Button>
+          <div className="flex shrink-0 flex-col gap-1">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                Verify / diff
+              </p>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                className="h-7 px-2 text-xs"
+                disabled={
+                  !diffs.some((d) => d.status === "new" || d.status === "changed")
+                }
+                onClick={acceptAllDiffs}
+                title="Accept all new and changed candidates"
+              >
+                Accept all
+              </Button>
+            </div>
+            {diffs.length > 0 && (
+              <p className="text-[11px] text-slate-500">
+                {(["changed", "new", "excluded", "present", "expired"] as const)
+                  .map((s) => {
+                    const n = diffs.filter((d) => d.status === s).length;
+                    return n ? `${n} ${s}` : null;
+                  })
+                  .filter(Boolean)
+                  .join(" · ")}
+              </p>
+            )}
           </div>
           <ScrollArea className="min-h-0 min-w-0 flex-1 overflow-x-hidden rounded-md border border-slate-200 bg-white">
             <ul className="divide-y divide-slate-100 text-sm">
@@ -1274,8 +1416,23 @@ export function Workspace() {
                         </span>
                       </>
                     )}
-                    {d.notes.length ? ` — ${d.notes.join("; ")}` : ""}
                   </p>
+                  {d.notes.length > 0 && (
+                    <p
+                      className={
+                        d.status === "changed" || d.status === "new"
+                          ? "text-[11px] font-medium text-amber-800"
+                          : d.status === "excluded"
+                            ? "text-[11px] text-slate-500"
+                            : "text-[11px] text-slate-400"
+                      }
+                      title={d.notes.join(" · ")}
+                    >
+                      {(d.status === "changed" || d.status === "new"
+                        ? "Why: "
+                        : "") + d.notes.join(" · ")}
+                    </p>
+                  )}
                   {(d.status === "new" || d.status === "changed") && (
                     <Button size="sm" variant="outline" onClick={() => acceptDiff(d)}>
                       Accept
