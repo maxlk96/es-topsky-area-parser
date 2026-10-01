@@ -69,6 +69,21 @@ describe("parseValidityWindow", () => {
     expect(w.validTo).toMatch(/09 OCT 2026/);
     expect(w.toDate?.toISOString()).toBe("2026-10-09T20:00:00.000Z");
   });
+
+  it("keeps cross-year windows like SUP 189/2026 (end 2027)", () => {
+    const now = new Date("2026-10-01T12:00:00Z");
+    const w = parseValidityWindow(
+      "Tider / Hours 07 OCT 2026 – 31 AUG 2027",
+      "AIP SUP 189/2026 01 OCT 2026 Temporary danger areas near Västervik",
+      { supNumber: "189/2026" },
+    );
+    expect(w.validFrom).toBe("07 OCT 2026");
+    expect(w.validTo).toBe("31 AUG 2027");
+    expect(w.toDate?.getUTCFullYear()).toBe(2027);
+    const a = area(w.validFrom, w.validTo, "189/2026");
+    expect(isExpired(a, now)).toBe(false);
+    expect(isUpcoming(a, now)).toBe(true);
+  });
 });
 
 describe("isExpired / isUpcoming", () => {

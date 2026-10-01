@@ -108,7 +108,8 @@ export type ValidityWindow = {
 /**
  * Parse SUP hours / period. Handles:
  * - "from 21 OCT 2026 to 22 OCT 2026"
- * - "21 OCT 1600 – 22 OCT 1200" (year from SUP / publication)
+ * - "07 OCT 2026 – 31 AUG 2027" (explicit years, possibly spanning years)
+ * - "21 OCT 1600 – 22 OCT 1200" (HHMM; year from SUP / publication)
  */
 export function parseValidityWindow(
   chunk: string,
@@ -118,7 +119,7 @@ export function parseValidityWindow(
   const year =
     yearHintFromMeta(meta) ?? yearHintFromText(fullText) ?? yearHintFromText(chunk);
 
-  // Full year forms first
+  // Full year forms first (catalogue-style from/to)
   const period = fullText.match(
     /from\s+(\d{1,2}\s+[A-Z]{3}\s+20\d{2})\s+to\s+(\d{1,2}\s+[A-Z]{3}\s+20\d{2})/i,
   );
@@ -133,7 +134,27 @@ export function parseValidityWindow(
     };
   }
 
-  // Per-area or document Hours: DD MON HHMM – DD MON HHMM
+  // Explicit calendar years on both sides: "07 OCT 2026 – 31 AUG 2027"
+  // Must run before HHMM handling — 2027 as HHMM + SUP year would become AUG 2026.
+  const yearRange =
+    chunk.match(
+      /(\d{1,2}\s+[A-Z]{3}\s+20\d{2})\s*[–-]\s*(\d{1,2}\s+[A-Z]{3}\s+20\d{2})/i,
+    ) ||
+    fullText.match(
+      /(\d{1,2}\s+[A-Z]{3}\s+20\d{2})\s*[–-]\s*(\d{1,2}\s+[A-Z]{3}\s+20\d{2})/i,
+    );
+  if (yearRange) {
+    const fromDate = parseLooseDate(yearRange[1]);
+    const toDate = parseLooseDate(yearRange[2], { endOfDay: true });
+    return {
+      validFrom: yearRange[1],
+      validTo: yearRange[2],
+      fromDate: fromDate ?? undefined,
+      toDate: toDate ?? undefined,
+    };
+  }
+
+  // Per-area or document Hours: DD MON HHMM – DD MON HHMM (no years)
   const hours =
     chunk.match(
       /(\d{1,2}\s+[A-Z]{3}\s+\d{4})\s*[–-]\s*(\d{1,2}\s+[A-Z]{3}\s+\d{4})/i,
@@ -143,6 +164,25 @@ export function parseValidityWindow(
     );
 
   if (hours && year != null) {
+    const endTok = hours[2].match(/(\d{4})\s*$/)?.[1];
+    const startTok = hours[1].match(/(\d{4})\s*$/)?.[1];
+    // Safety: if both look like years, treat as calendar range (should have matched above)
+    if (
+      startTok &&
+      endTok &&
+      looksLikeYear(Number(startTok)) &&
+      looksLikeYear(Number(endTok))
+    ) {
+      const fromDate = parseLooseDate(hours[1]);
+      const toDate = parseLooseDate(hours[2], { endOfDay: true });
+      return {
+        validFrom: hours[1],
+        validTo: hours[2],
+        fromDate: fromDate ?? undefined,
+        toDate: toDate ?? undefined,
+      };
+    }
+
     const fromDate = parseLooseDate(hours[1], {
       defaultYear: year,
       timeIsHhmm: true,
