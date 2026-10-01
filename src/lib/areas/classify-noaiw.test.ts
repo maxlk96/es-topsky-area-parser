@@ -51,13 +51,19 @@ describe("hasAviationFlyingWording", () => {
 });
 
 describe("inferAreaTypeFromRemarks NOAIW", () => {
-  it("SUP 179-style military operations → 4F without NOAIW", () => {
-    const r = inferAreaTypeFromRemarks(
+  it("SUP 179/186-style military operations/activities → 4F without NOAIW", () => {
+    const ops = inferAreaTypeFromRemarks(
       "Temporary restricted area ESR527 Stenshuvud established for military operations.",
     );
-    expect(r.areaTypeCode).toBe("4F");
-    expect(r.noaiw).toBe(false);
-    expect(r.reason).toBe("military_non_aviation");
+    expect(ops.areaTypeCode).toBe("4F");
+    expect(ops.noaiw).toBe(false);
+    expect(ops.reason).toBe("military_non_aviation");
+    const acts = inferAreaTypeFromRemarks(
+      "Temporary restricted area ESR739 Hyttefallet established for military activities.",
+    );
+    expect(acts.areaTypeCode).toBe("4F");
+    expect(acts.noaiw).toBe(false);
+    expect(acts.reason).toBe("military_non_aviation");
   });
 
   it("military aviation operations → 4F + NOAIW", () => {

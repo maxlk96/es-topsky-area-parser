@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { shouldEmitNoAupActivationComment } from "@/lib/areas/activation";
+import { formatAreaBlock, formatTempoAreaBlocks } from "@/lib/areas/write-topsky";
 import { extractAreaSections, parseSupHtml } from "./parse-sup";
 
 const MULTI_SUP_HTML = `
@@ -73,7 +75,7 @@ describe("multi-area SUP parse", () => {
     expect(a797.noaiw).toBe(true);
   });
 
-  it("SUP 179-style military operations does not get NOAIW", () => {
+  it("SUP 179-style military operations gets AUP but not NOAIW", () => {
     const areas = parseSupHtml(SUP_179_MILITARY_OPS_HTML, {
       amdtId: "test",
       supNumber: "179/2026",
@@ -84,7 +86,45 @@ describe("multi-area SUP parse", () => {
     expect(a.id).toBe("ESR527");
     expect(a.noaiw).toBe(false);
     expect(a.directives).not.toContain("NOAIW");
-    expect(a.activation).toEqual({ type: "MANUAL" });
+    expect(a.activation).toEqual({ type: "AUP", key: "ESR527" });
     expect(a.areaTypeCode).toBe("4F");
+  });
+
+  it("SUP 186-style military activities (ESR739) gets AUP but not NOAIW", () => {
+    const html = `
+<html><body>
+Temporary restricted area – ESR739 HYTTEFALLET
+Temporary restricted area ESR739 Hyttefallet established for military activities.
+Flight within the area prohibited for all non-participating ACFT.
+The following traffic on mission is exempted after permission from Östgöta APP:
+Military flights, Police, Ambulance.
+ESR739 HYTTEFALLET
+Vertical limit
+584500N 0151000E – 584500N 0152000E – 584000N 0152000E – 584000N 0151000E –
+584500N 0151000E.
+4500 ft AMSL
+SFC
+</body></html>
+`;
+    const areas = parseSupHtml(html, {
+      amdtId: "test",
+      supNumber: "186/2026",
+      href: "AIP SUP 186-2026/ES-SUP-en-GB.html",
+    });
+    expect(areas).toHaveLength(1);
+    const a = areas[0]!;
+    expect(a.id).toBe("ESR739");
+    expect(a.noaiw).toBe(false);
+    expect(a.directives).not.toContain("NOAIW");
+    expect(a.activation).toEqual({ type: "AUP", key: "ESR739" });
+    expect(a.areaTypeCode).toBe("4F");
+    // Export must emit ACTIVE:AUP — never // NO AUP ACTIVATION.
+    expect(shouldEmitNoAupActivationComment(a)).toBe(false);
+    const block = formatAreaBlock(a);
+    expect(block).toMatch(/^ACTIVE:AUP:ESR739$/m);
+    expect(block).not.toContain("// NO AUP ACTIVATION");
+    const tempo = formatTempoAreaBlocks([a]);
+    expect(tempo).toMatch(/ACTIVE:AUP:ESR739/);
+    expect(tempo).not.toContain("// NO AUP ACTIVATION");
   });
 });

@@ -181,9 +181,13 @@ export function inferAreaTypeFromRemarks(remarks: string): {
       reason: "no_ats_crossing_authority",
     };
   }
-  // Bare “military operations” (e.g. SUP 179/2026) → 4F, no NOAIW.
-  // NOAIW requires clear aviation/flying wording above — not the default.
-  if (/\bmilitary\s+operations\b/i.test(t) && !flying) {
+  // Bare “military operations/activities” (e.g. SUP 179/2026 Stenshuvud,
+  // SUP 186/2026 Hyttefallet) → 4F, no NOAIW. AUP is applied separately in
+  // parse-sup; NOAIW still requires clear aviation/flying wording above.
+  if (
+    /\bmilitary\s+(operations|activities)\b/i.test(t) &&
+    !flying
+  ) {
     return {
       areaTypeCode: "4F",
       noaiw: false,
