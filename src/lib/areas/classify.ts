@@ -25,7 +25,7 @@ export function mapStyleFor(area: Pick<AreaRecord, "category" | "areaTypeCode" |
     }
     return {
       stroke: "#ef4444",
-      fill: foreign ? "#6b7280" : "#6b7280",
+      fill: "#6b7280",
       fillOpacity: foreign ? 0.25 : 0.3,
       lineWidth: 2.5,
     };
