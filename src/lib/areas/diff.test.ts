@@ -139,4 +139,30 @@ describe("diffCandidates reasons", () => {
     expect(r13.status).toBe("changed");
     expect(r13.notes.some((n) => n.includes("LIMITS 0:335 → 0:355"))).toBe(true);
   });
+
+  it("labels ENR 5.1 + AUP without saying permanent (ESD171)", () => {
+    const existing = [
+      stub({
+        id: "ESD171",
+        shortName: "D171",
+        name: "HÄRNÖN EAST",
+        category: "D",
+        activation: { type: "AUP", key: "ESD171" },
+      }),
+    ];
+    const candidates = [
+      stub({
+        id: "ESD171",
+        shortName: "D171",
+        name: "HÄRNON EAST",
+        category: "D",
+        activation: { type: "AUP", key: "ESD171" },
+        provenance: { source: "enr51" },
+      }),
+    ];
+    const item = diffCandidates(existing, candidates)[0]!;
+    expect(item.notes).toContain("ENR 5.1");
+    expect(item.notes).toContain("AUP activation");
+    expect(item.notes.some((n) => /permanent/i.test(n))).toBe(false);
+  });
 });

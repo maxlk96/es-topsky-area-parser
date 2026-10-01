@@ -2,6 +2,7 @@ import {
   FIR_BORDER_EXCLUSION,
   FIR_BORDER_NOTE,
 } from "@/lib/aip/fir-border";
+import { activationLabel } from "./activation";
 import { isUasOnlyText } from "./classify";
 import { normalizeDesignator } from "./names";
 import type { AreaRecord, DiffItem } from "./types";
@@ -192,13 +193,25 @@ export function diffCandidates(
       notes.push("needs_review: missing AIP name (designator-only)");
     }
     if (normalized.provenance.source === "enr51") {
-      notes.push("ENR 5.1 permanent");
+      // Published ENR 5.1 geometry (not a SUP). Do not say "permanent" —
+      // that was read as ACTIVE:1 / no AUP (e.g. ESD171 Härnön is AUP).
+      notes.push("ENR 5.1");
     } else if (normalized.provenance.source === "sup") {
       notes.push(
         normalized.provenance.supNumber
           ? `SUP ${normalized.provenance.supNumber}`
           : "AIP SUP",
       );
+    }
+    if (
+      (normalized.category === "R" || normalized.category === "D") &&
+      normalized.activation
+    ) {
+      const act = activationLabel(normalized);
+      if (act === "AUP" || act === "AUP group") notes.push("AUP activation");
+      else if (act === "always") notes.push("ACTIVE:1 (not AUP)");
+      else if (act === "no AUP") notes.push("no AUP (manual)");
+      else if (act === "schedule") notes.push("scheduled ACTIVE");
     }
 
     const ex = byId.get(candId);

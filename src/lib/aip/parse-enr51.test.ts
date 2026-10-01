@@ -146,6 +146,26 @@ Oil refinery.
     expect(r117.label?.lon).toBeCloseTo(r117.boundCircle!.lon, 5);
   });
 
+  it("ESD171 Härnön gets AUP from ACC activity remarks (published ENR 5.1)", () => {
+    const html = `
+<html><body>
+ESD171 HÄRNON EAST
+623836N 0183946E - 622656N 0183946E - 622656N 0182046E to point of origin.
+40500 ft AMSL
+GND
+Se punkt 3.1.1.
+Information om pågående verksamhet kan erhållas av STOCKHOLM ACC.
+See para 3.1.1. Information about activity obtainable from STOCKHOLM ACC.
+</body></html>`;
+    const areas = parseEnr51Html(html, { amdtId: "test-amdt" });
+    const d171 = areas.find((a) => a.id === "ESD171")!;
+    expect(d171.areaTypeCode).toBe("4F");
+    expect(d171.noaiw).toBe(true);
+    expect(d171.activation).toEqual({ type: "AUP", key: "ESD171" });
+    // Published ENR geometry — not a SUP; lives outside TEMPO in TopSkyAreas.
+    expect(d171.section).toBe("other");
+  });
+
   it("ESR94 Sörentorp is parsed without an active LABEL", () => {
     const html = `
 <html><body>

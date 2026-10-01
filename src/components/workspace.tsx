@@ -32,6 +32,7 @@ import {
   redensifyBoundCircleAuto,
 } from "@/lib/areas/coords";
 import { diffCandidates, sortDiffItems } from "@/lib/areas/diff";
+import { activationLabel } from "@/lib/areas/activation";
 import { areaOmitsLabel, mentionsUasActivity } from "@/lib/areas/classify";
 import { parseTopSkyBuffer } from "@/lib/areas/parse-topsky";
 import {
@@ -837,7 +838,7 @@ export function Workspace() {
               className="w-full"
               onClick={reloadFromAip}
               disabled={!amdtId || !areas.length || loading}
-              title="ENR 5.1 permanent R/D + likely tempo SUPs → diff vs loaded TopSky baseline"
+              title="ENR 5.1 published R/D + likely tempo SUPs → diff vs loaded TopSky baseline"
             >
               Reload from AIP → diff
             </Button>
@@ -1314,6 +1315,10 @@ export function Workspace() {
                           </span>
                           <span className="block text-[11px] text-slate-400">
                             {a.category}
+                            {a.section === "tempo" ? " · tempo" : ""}
+                            {a.activation
+                              ? ` · ${activationLabel(a)}`
+                              : ""}
                             {a.limits ? ` · ${a.limits[0]}:${a.limits[1]}` : ""}
                             {a.noaiw ? " · NOAIW" : ""}
                             {a.needsReview === "missing_name"
