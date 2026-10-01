@@ -1,10 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { parseEnr51Html } from "./parse-enr51";
+import {
+  extractEnr51Section221Designators,
+  parseEnr51Html,
+} from "./parse-enr51";
 import { mergeAipReloadCandidates } from "./reload-aip";
 import type { AreaRecord } from "@/lib/areas/types";
 
 const ENR_SNIPPET = `
 <html><body>
+2 Restricted areas
+2.2 Restricted areas established by the Government
+2.2.1. This concerns the following areas: ES R03, R04, R11, R14, R19, R21, R26, R33, R85, R87, R88, R91, R93 and R95.
+Within these restricted areas, established by the Government, flight is permitted without special permission unless otherwise promulgated by means of NOTAM or AIP SUP.
+2.2.2. Other government text.
+2.6 List of restricted areas
 ESR41A RINGENÄS
 564559N 0123350E - 564159N 0124050E - 564159N 0124340E - 564119N 0124410E -
 564019N 0124220E - 563359N 0124220E - 563559N 0123310E - 563959N 0122950E -
@@ -22,7 +31,12 @@ ESR03 LOWER PART OF RIVER KALIX
 661128N 0230205E to point of origin.
 UNL
 GND
-Military.
+Permission required only when so is promulgated by NOTAM or AIP SUP.
+ESR85 HOLMÖGADD
+634056N 0205045E - 634056N 0205515E - 633156N 0204615E - 633456N 0204015E to point of origin.
+UNL
+GND
+Permission required only when so is promulgated by NOTAM or AIP SUP.
 ESR1 ESRANGE
 690336N 0203255E along the FIR BDRY to 683156N 0215935E - 681745N 0214612E -
 675924N 0212754E - 674724N 0211613E - 674724N 0205443E - 675924N 0204843E -
@@ -63,6 +77,30 @@ function stub(over: Partial<AreaRecord>): AreaRecord {
   };
 }
 
+describe("extractEnr51Section221Designators", () => {
+  it("parses ENR 5.1 §2.2.1 government R list (Max: 5.2.2.1)", () => {
+    const ids = extractEnr51Section221Designators(ENR_SNIPPET);
+    expect([...ids].sort()).toEqual(
+      [
+        "ESR3",
+        "ESR4",
+        "ESR11",
+        "ESR14",
+        "ESR19",
+        "ESR21",
+        "ESR26",
+        "ESR33",
+        "ESR85",
+        "ESR87",
+        "ESR88",
+        "ESR91",
+        "ESR93",
+        "ESR95",
+      ].sort(),
+    );
+  });
+});
+
 describe("parseEnr51Html", () => {
   it("extracts R/D names, polygons, circles; normalizes ESR03→ESR3", () => {
     const areas = parseEnr51Html(ENR_SNIPPET, { amdtId: "test-amdt" });
@@ -78,6 +116,17 @@ describe("parseEnr51Html", () => {
     expect(r3).toBeTruthy();
     expect(r3.name).toMatch(/KALIX/);
     expect(areas.every((a) => a.provenance.source === "enr51")).toBe(true);
+  });
+
+  it("forces NOAIW on ENR 5.1 §2.2.1 areas and keeps aviation NOAIW", () => {
+    const areas = parseEnr51Html(ENR_SNIPPET, { amdtId: "test-amdt" });
+    const r3 = areas.find((a) => a.id === "ESR3")!;
+    const r85 = areas.find((a) => a.id === "ESR85")!;
+    const r41 = areas.find((a) => a.id === "ESR41A")!;
+    expect(r3.noaiw).toBe(true);
+    expect(r3.directives).toContain("NOAIW");
+    expect(r85.noaiw).toBe(true);
+    expect(r41.noaiw).toBe(true); // military aviation operations
   });
 
   it("marks FIR BDRY areas as fir_border (manual only, no auto coords)", () => {

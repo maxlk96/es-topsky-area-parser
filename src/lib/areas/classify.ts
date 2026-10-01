@@ -190,8 +190,11 @@ export function inferAreaTypeFromRemarks(remarks: string): {
 }
 
 /**
- * ENR Accept: keep baseline `noaiw` (and NOAIW directive / activation) when
- * overwriting a known permanent 4F — covers the 33 legacy 4F without NOAIW.
+ * ENR Accept NOAIW merge for permanent 4F:
+ * - Never strip NOAIW the candidate correctly asserts (ENR 5.1 §2.2.1 / aviation).
+ * - Never strip baseline NOAIW that is already correct.
+ * - Keep baseline without NOAIW only when the candidate also omits it
+ *   (remaining legacy 4F outside §2.2.1).
  */
 export function mergeEnrAcceptPreservingNoaiw(
   candidate: AreaRecord,
@@ -205,7 +208,7 @@ export function mergeEnrAcceptPreservingNoaiw(
   ) {
     return candidate;
   }
-  const noaiw = existing.noaiw;
+  const noaiw = candidate.noaiw || existing.noaiw;
   const directives = noaiw
     ? Array.from(
         new Set([
@@ -218,9 +221,9 @@ export function mergeEnrAcceptPreservingNoaiw(
     ...candidate,
     noaiw,
     directives,
-    // Keep baseline activation when the area historically had no NOAIW/AUP pair.
+    // Keep baseline activation when still without NOAIW; otherwise prefer candidate (AUP).
     activation: noaiw
-      ? candidate.activation
+      ? (candidate.activation ?? existing.activation)
       : (existing.activation ?? candidate.activation),
   };
 }

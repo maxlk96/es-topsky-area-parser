@@ -56,6 +56,12 @@ export function explainAreaChanges(
 ): string[] {
   const reasons: string[] = [];
 
+  if (!!existing.noaiw !== !!candidate.noaiw) {
+    reasons.push(
+      candidate.noaiw ? "NOAIW added" : "NOAIW removed",
+    );
+  }
+
   const limEx = limitsKey(existing);
   const limCand = limitsKey(candidate);
   if (limEx !== limCand) {

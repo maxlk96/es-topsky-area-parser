@@ -2,6 +2,7 @@ import centroid from "@turf/centroid";
 import { polygon } from "@turf/helpers";
 import {
   areaOmitsLabel,
+  hasAviationFlyingWording,
   inferAreaTypeFromRemarks,
   isUasOnlyText,
   shortFromDesignator,
@@ -58,6 +59,28 @@ function parseLimits(chunk: string): [number, number] | undefined {
 }
 
 /**
+ * ENR 5.1 §2.2.1 — restricted areas established by the Government
+ * (“This concerns the following areas: ES R03, R04, …”).
+ * Max refers to this list as “ENR 5.2.2.1”. Those designators must get `NOAIW`.
+ */
+export function extractEnr51Section221Designators(htmlOrText: string): Set<string> {
+  const text = /</.test(htmlOrText) ? stripHtml(htmlOrText) : htmlOrText;
+  const m = text.match(
+    /2\.2\.1\.\s*This concerns the following areas:\s*([\s\S]*?)(?:2\.2\.2\.|2\.3\b)/i,
+  );
+  if (!m?.[1]) return new Set();
+  const ids = new Set<string>();
+  for (const hit of m[1].matchAll(
+    /\bES\s*([RD]\d{1,4}[A-Z]?)\b|\b([RD]\d{1,4}[A-Z]?)\b/gi,
+  )) {
+    const raw = (hit[1] || hit[2] || "").toUpperCase();
+    if (!raw || !/^[RD]\d/i.test(raw)) continue;
+    ids.add(normalizeDesignator(raw.startsWith("ES") ? raw : `ES${raw}`));
+  }
+  return ids;
+}
+
+/**
  * Parse permanent R/D from LFV ENR 5.1 HTML.
  * Blocks look like: `ESR41A RINGENÄS` + coords/circle + upper/lower limits.
  */
@@ -66,6 +89,7 @@ export function parseEnr51Html(
   meta: { amdtId?: string },
 ): AreaRecord[] {
   const text = stripHtml(html);
+  const section221Noaiw = extractEnr51Section221Designators(text);
   const re =
     /\b(ES[RD]\d{1,4}[A-Z]?)\s+([A-ZÅÄÖ][A-Za-zÅÄÖåäö0-9][A-Za-zÅÄÖåäö0-9 /-]{0,60}?)\s*\n([\s\S]*?)(?=\n\s*ES[RDP]\d|\n\s*ENR\s+5\.|$)/gi;
   const areas: AreaRecord[] = [];
@@ -169,7 +193,17 @@ export function parseEnr51Html(
       : inferred.areaTypeCode === "4F"
         ? "4F"
         : "3";
-    const noaiw = areaTypeCode === "4F";
+    // NOAIW: ENR 5.1 §2.2.1 government list (Max “5.2.2.1”), clear aviation
+    // wording, or ATS/ACC activity — not every AREA:4F.
+    const atsOrActivity =
+      /Permission obtainable from|Tillstånd kan erhållas från|Information about activity obtainable from|\bACC\b|\bATS\b|\bATC\b/i.test(
+        chunk,
+      );
+    const noaiw =
+      section221Noaiw.has(id) ||
+      inferred.noaiw ||
+      (areaTypeCode === "4F" &&
+        (hasAviationFlyingWording(chunk) || atsOrActivity));
 
     let label: AreaRecord["label"];
     // Full circles: LABEL at BOUND:C centre (not densified-ring centroid).

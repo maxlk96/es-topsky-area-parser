@@ -71,7 +71,7 @@ describe("inferAreaTypeFromRemarks NOAIW", () => {
 });
 
 describe("mergeEnrAcceptPreservingNoaiw", () => {
-  it("keeps baseline noaiw=false for legacy permanent 4F", () => {
+  it("keeps baseline noaiw=false for legacy permanent 4F when candidate also omits it", () => {
     const existing = stub({
       id: "ESR1A",
       areaTypeCode: "4F",
@@ -83,15 +83,36 @@ describe("mergeEnrAcceptPreservingNoaiw", () => {
     const candidate = stub({
       id: "ESR1A",
       areaTypeCode: "4F",
-      noaiw: true,
-      directives: ["NOAIW"],
-      activation: { type: "AUP", key: "ESR1A" },
+      noaiw: false,
+      directives: [],
+      activation: { type: "ALWAYS" },
       provenance: { source: "enr51", amdtId: "test" },
     });
     const merged = mergeEnrAcceptPreservingNoaiw(candidate, existing);
     expect(merged.noaiw).toBe(false);
     expect(merged.directives).not.toContain("NOAIW");
     expect(merged.activation).toEqual({ type: "ALWAYS" });
+  });
+
+  it("adds NOAIW for ENR 5.1 §2.2.1 candidate even when baseline lacked it", () => {
+    const existing = stub({
+      id: "ESR3",
+      areaTypeCode: "4F",
+      noaiw: false,
+      directives: [],
+      activation: { type: "AUP", key: "ESR3" },
+    });
+    const candidate = stub({
+      id: "ESR3",
+      areaTypeCode: "4F",
+      noaiw: true,
+      directives: ["NOAIW"],
+      activation: { type: "AUP", key: "ESR3" },
+      provenance: { source: "enr51", amdtId: "test" },
+    });
+    const merged = mergeEnrAcceptPreservingNoaiw(candidate, existing);
+    expect(merged.noaiw).toBe(true);
+    expect(merged.directives).toContain("NOAIW");
   });
 
   it("keeps baseline noaiw=true when already present", () => {

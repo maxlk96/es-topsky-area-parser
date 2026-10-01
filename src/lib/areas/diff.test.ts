@@ -165,4 +165,38 @@ describe("diffCandidates reasons", () => {
     expect(item.notes).toContain("AUP activation");
     expect(item.notes.some((n) => /permanent/i.test(n))).toBe(false);
   });
+
+  it("flags NOAIW-only ENR 5.1 §2.2.1 updates as changed", () => {
+    const ring: [number, number][] = [
+      [22.7, 66.3],
+      [23.2, 66.3],
+      [23.2, 66.1],
+      [22.7, 66.1],
+      [22.7, 66.3],
+    ];
+    const existing = [
+      stub({
+        id: "ESR3",
+        shortName: "R3",
+        name: "LOWER PART OF RIVER KALIX",
+        noaiw: false,
+        directives: [],
+        coordinates: ring,
+      }),
+    ];
+    const candidates = [
+      stub({
+        id: "ESR3",
+        shortName: "R3",
+        name: "LOWER PART OF RIVER KALIX",
+        noaiw: true,
+        directives: ["NOAIW"],
+        coordinates: ring,
+        provenance: { source: "enr51" },
+      }),
+    ];
+    const item = diffCandidates(existing, candidates)[0]!;
+    expect(item.status).toBe("changed");
+    expect(item.notes).toContain("NOAIW added");
+  });
 });
