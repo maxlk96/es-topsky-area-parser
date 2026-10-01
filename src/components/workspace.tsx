@@ -29,6 +29,7 @@ import {
   applyLabelEdits,
   encodeLatin1,
   mergeTempoSection,
+  patchLabelInBlock,
 } from "@/lib/areas/write-topsky";
 import type {
   AmdtEntry,
@@ -121,10 +122,35 @@ export function Workspace() {
   const [supViewer, setSupViewer] = useState<SupViewer | null>(null);
   const [labelPlacer, setLabelPlacer] = useState(false);
   const [layersOpen, setLayersOpen] = useState(true);
+  /** Share of the list+diff stack used by the area list (rest = verify/diff). */
+  const [listPanePct, setListPanePct] = useState(42);
+  const splitRef = useRef<HTMLDivElement>(null);
   const supDwellTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Bumps only on explicit focus requests so hover re-highlights do not pan. */
   const focusSeq = useRef(0);
   const [focusToken, setFocusToken] = useState(0);
+
+  const onListDiffSplitDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      const root = splitRef.current;
+      if (!root) return;
+      const startY = e.clientY;
+      const startPct = listPanePct;
+      const height = root.getBoundingClientRect().height || 1;
+      const onMove = (ev: MouseEvent) => {
+        const deltaPct = ((ev.clientY - startY) / height) * 100;
+        setListPanePct(Math.min(72, Math.max(22, startPct + deltaPct)));
+      };
+      const onUp = () => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    },
+    [listPanePct],
+  );
 
   const requestFocus = useCallback((areaId: string) => {
     focusSeq.current += 1;
@@ -408,10 +434,16 @@ export function Workspace() {
         if (areaFeatureId(a) !== fid) return a;
         // Never invent a LABEL for unlabeled baseline areas.
         if (!a.label) return a;
+        const label = { ...a.label, lat, lon };
+        // Keep rawBlock in sync so baseline (tempo + permanent) export patches LABEL.
+        const rawBlock = a.rawBlock
+          ? patchLabelInBlock(a.rawBlock, label)
+          : a.rawBlock;
         return {
           ...a,
-          label: { ...a.label, lat, lon },
+          label,
           labelEdited: true,
+          rawBlock,
         };
       }),
     );
@@ -639,8 +671,8 @@ export function Workspace() {
               <div className="min-w-0">
                 <p className="text-xs font-semibold text-slate-800">Label placer</p>
                 <p className="text-[10px] leading-snug text-slate-500">
-                  Drag existing LABELs on the map to reduce overlap. Unlabeled areas stay
-                  untouched.
+                  Drag any existing LABEL (baseline or accepted SUP) on the map. Areas with
+                  no LABEL stay untouched on export.
                 </p>
               </div>
               <Checkbox
@@ -676,22 +708,22 @@ export function Workspace() {
               </p>
             )}
           </div>
-          <div className="rounded-md border border-slate-200 bg-white px-2 py-2">
+          <div className="min-w-0 overflow-x-hidden rounded-md border border-slate-200 bg-white px-2 py-2">
             <button
               type="button"
-              className="flex w-full items-center justify-between gap-2 text-left"
+              className="flex w-full min-w-0 items-center justify-between gap-2 text-left"
               onClick={() => setLayersOpen((o) => !o)}
               aria-expanded={layersOpen}
             >
-              <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
+              <p className="min-w-0 text-[11px] font-medium uppercase tracking-wide text-slate-500">
                 Map layers
               </p>
-              <span className="text-slate-500" aria-hidden>
+              <span className="shrink-0 text-slate-500" aria-hidden>
                 {layersOpen ? "▼" : "▶"}
               </span>
             </button>
             {layersOpen && (
-              <div className="mt-2 max-h-[28vh] space-y-2 overflow-y-auto">
+              <div className="mt-2 max-h-[28vh] space-y-2 overflow-y-auto overflow-x-hidden">
                 {LAYER_GROUPS.map((group) => {
                   const gState = groupToggleState(group, layerVisibility);
                   const groupCount = group.toggles.reduce(
@@ -701,21 +733,22 @@ export function Workspace() {
                   return (
                     <div
                       key={group.id}
-                      className="rounded border border-slate-100 bg-slate-50/80 px-2 py-1.5"
+                      className="min-w-0 rounded border border-slate-100 bg-slate-50/80 px-2 py-1.5"
                     >
-                      <div className="mb-1 flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="text-xs font-semibold text-slate-800">
+                      <div className="mb-1 flex min-w-0 items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <p className="break-words text-xs font-semibold text-slate-800">
                             {group.title}{" "}
                             <span className="font-normal text-slate-400">
                               ({groupCount})
                             </span>
                           </p>
-                          <p className="text-[10px] leading-snug text-slate-500">
+                          <p className="break-words text-[10px] leading-snug text-slate-500">
                             {group.hint}
                           </p>
                         </div>
                         <Checkbox
+                          className="mt-0.5 shrink-0"
                           checked={gState === "all"}
                           indeterminate={gState === "some"}
                           onCheckedChange={(value) =>
@@ -724,19 +757,20 @@ export function Workspace() {
                           aria-label={`Show group ${group.title}`}
                         />
                       </div>
-                      <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+                      <div className="grid min-w-0 grid-cols-1 gap-y-1">
                         {group.toggles.map(({ key, label }) => (
                           <div
                             key={key}
-                            className="flex items-center justify-between gap-2"
+                            className="flex min-w-0 items-center justify-between gap-2"
                           >
-                            <span className="text-xs text-slate-700">
+                            <span className="min-w-0 flex-1 break-words text-xs text-slate-700">
                               {label}{" "}
                               <span className="text-slate-400">
                                 ({counts[key] ?? 0})
                               </span>
                             </span>
                             <Checkbox
+                              className="shrink-0"
                               checked={layerVisibility[key] === true}
                               onCheckedChange={(value) =>
                                 setLayerVisible(key, value === true)
@@ -757,54 +791,73 @@ export function Workspace() {
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
           />
-          <ScrollArea className="h-[34%] min-h-[140px] rounded-md border border-slate-200 bg-white">
-            <ul className="divide-y divide-slate-100 text-sm">
-              {visibleList.slice(0, 400).map((a) => {
-                const fid = areaFeatureId(a);
-                const hovered = hoverIncludes(hoverKey, fid);
-                const selected = selectedKey === fid;
-                return (
-                <li key={fid}>
-                  <button
-                    type="button"
-                    data-area-fid={fid}
-                    className={`flex w-full items-start gap-2 px-2 py-1.5 text-left hover:bg-sky-50 ${
-                      selected
-                        ? "bg-sky-100 ring-1 ring-inset ring-sky-400"
-                        : hovered
-                          ? "bg-sky-50 ring-1 ring-inset ring-sky-300"
-                          : ""
-                    }`}
-                    onClick={() => {
-                      setSelectedKey(fid);
-                      requestFocus(a.id);
-                    }}
-                    onMouseEnter={() => setHoverKey(fid)}
-                    onMouseLeave={() => setHoverKey(null)}
-                  >
-                    <Badge
-                      variant={a.areaTypeCode === "3" ? "outline" : "secondary"}
-                      className="shrink-0"
+          <div
+            ref={splitRef}
+            className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+          >
+            <ScrollArea
+              className="min-h-[96px] overflow-x-hidden rounded-md border border-slate-200 bg-white"
+              style={{ flex: `0 0 ${listPanePct}%` }}
+            >
+              <ul className="divide-y divide-slate-100 text-sm">
+                {visibleList.slice(0, 400).map((a) => {
+                  const fid = areaFeatureId(a);
+                  const hovered = hoverIncludes(hoverKey, fid);
+                  const selected = selectedKey === fid;
+                  return (
+                  <li key={fid}>
+                    <button
+                      type="button"
+                      data-area-fid={fid}
+                      className={`flex w-full items-start gap-2 px-2 py-1.5 text-left hover:bg-sky-50 ${
+                        selected
+                          ? "bg-sky-100 ring-1 ring-inset ring-sky-400"
+                          : hovered
+                            ? "bg-sky-50 ring-1 ring-inset ring-sky-300"
+                            : ""
+                      }`}
+                      onClick={() => {
+                        setSelectedKey(fid);
+                        requestFocus(a.id);
+                      }}
+                      onMouseEnter={() => setHoverKey(fid)}
+                      onMouseLeave={() => setHoverKey(null)}
                     >
-                      {a.areaTypeCode}
-                    </Badge>
-                    <span>
-                      <span className="font-medium">{a.id}</span>{" "}
-                      <span className="text-slate-600">{a.name}</span>
-                      <span className="block text-[11px] text-slate-400">
-                        {a.category}
-                        {a.limits ? ` · ${a.limits[0]}:${a.limits[1]}` : ""}
-                        {a.noaiw ? " · NOAIW" : ""}
+                      <Badge
+                        variant={a.areaTypeCode === "3" ? "outline" : "secondary"}
+                        className="shrink-0"
+                      >
+                        {a.areaTypeCode}
+                      </Badge>
+                      <span className="min-w-0">
+                        <span className="font-medium">{a.id}</span>{" "}
+                        <span className="text-slate-600">{a.name}</span>
+                        <span className="block text-[11px] text-slate-400">
+                          {a.category}
+                          {a.limits ? ` · ${a.limits[0]}:${a.limits[1]}` : ""}
+                          {a.noaiw ? " · NOAIW" : ""}
+                        </span>
                       </span>
-                    </span>
-                  </button>
-                </li>
-              );
-              })}
-            </ul>
-          </ScrollArea>
+                    </button>
+                  </li>
+                );
+                })}
+              </ul>
+            </ScrollArea>
 
-          <div className="flex items-center justify-between gap-2">
+            <div
+              role="separator"
+              aria-orientation="horizontal"
+              aria-label="Resize area list and verify panels"
+              title="Drag to resize"
+              onMouseDown={onListDiffSplitDown}
+              className="my-1 flex h-3 shrink-0 cursor-row-resize items-center justify-center"
+            >
+              <span className="h-1 w-12 rounded-full bg-slate-300" />
+            </div>
+
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-hidden">
+          <div className="flex shrink-0 items-center justify-between gap-2">
             <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
               Verify / diff
             </p>
@@ -822,7 +875,7 @@ export function Workspace() {
               Accept all
             </Button>
           </div>
-          <ScrollArea className="min-h-0 flex-1 rounded-md border border-slate-200 bg-white">
+          <ScrollArea className="min-h-0 min-w-0 flex-1 overflow-x-hidden rounded-md border border-slate-200 bg-white">
             <ul className="divide-y divide-slate-100 text-sm">
               {diffs.map((d) => {
                 const fid = areaFeatureId(d.candidate);
@@ -924,6 +977,8 @@ export function Workspace() {
               )}
             </ul>
           </ScrollArea>
+            </div>
+          </div>
         </aside>
       </div>
     </div>
