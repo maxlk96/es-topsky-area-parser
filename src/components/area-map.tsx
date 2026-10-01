@@ -10,7 +10,7 @@ import {
 import "maplibre-gl/dist/maplibre-gl.css";
 import { mapStyleFor } from "@/lib/areas/classify";
 import { closeRing } from "@/lib/areas/coords";
-import type { AreaRecord } from "@/lib/areas/types";
+import type { AreaCategory, AreaRecord } from "@/lib/areas/types";
 
 if (typeof window !== "undefined") {
   // Absolute URL so the module worker can resolve maplibre-gl-shared.mjs
@@ -18,11 +18,13 @@ if (typeof window !== "undefined") {
   setWorkerUrl(`${window.location.origin}/maplibre-gl-worker.mjs`);
 }
 
+export type CategoryVisibility = Record<AreaCategory, boolean>;
+
 type Props = {
   areas: AreaRecord[];
   candidates?: AreaRecord[];
   focusId?: string | null;
-  showOther: boolean;
+  categoryVisibility: CategoryVisibility;
 };
 
 type Role = "base" | "candidate";
@@ -68,18 +70,20 @@ function setSourceData(
   return true;
 }
 
-export function AreaMap({ areas, candidates = [], focusId, showOther }: Props) {
+export function AreaMap({
+  areas,
+  candidates = [],
+  focusId,
+  categoryVisibility,
+}: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const sourcesReadyRef = useRef(false);
   const latestRef = useRef({ visible: [] as AreaRecord[], candidates: [] as AreaRecord[] });
 
   const visible = useMemo(
-    () =>
-      areas.filter(
-        (a) => a.mapDefaultVisible || (showOther && a.category === "OTHER"),
-      ),
-    [areas, showOther],
+    () => areas.filter((a) => categoryVisibility[a.category]),
+    [areas, categoryVisibility],
   );
 
   latestRef.current = { visible, candidates };

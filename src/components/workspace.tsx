@@ -28,12 +28,34 @@ import { parseTopSkyBuffer, parseTopSkyText } from "@/lib/areas/parse-topsky";
 import { encodeLatin1, mergeTempoSection } from "@/lib/areas/write-topsky";
 import type {
   AmdtEntry,
+  AreaCategory,
   AreaRecord,
   DiffItem,
   SupCatalogueRow,
 } from "@/lib/areas/types";
+import type { CategoryVisibility } from "@/components/area-map";
 
 type BaselineKind = "github" | "local";
+
+/** Plan defaults: R/D/TRA/PCA/CBA on; OTHER (TCT/STCA/…) off. */
+const DEFAULT_CATEGORY_VISIBILITY: CategoryVisibility = {
+  R: true,
+  D: true,
+  P: true,
+  TRA: true,
+  CBA: true,
+  PCA: true,
+  OTHER: false,
+};
+
+const MAP_TOGGLE_CATEGORIES: { key: AreaCategory; label: string }[] = [
+  { key: "R", label: "R" },
+  { key: "D", label: "D" },
+  { key: "PCA", label: "PCA" },
+  { key: "TRA", label: "TRA" },
+  { key: "CBA", label: "CBA" },
+  { key: "OTHER", label: "OTHER" },
+];
 
 export function Workspace() {
   const [baselineKind, setBaselineKind] = useState<BaselineKind>("github");
@@ -41,7 +63,9 @@ export function Workspace() {
   const [areas, setAreas] = useState<AreaRecord[]>([]);
   const [encoding, setEncoding] = useState("latin1");
   const [loading, setLoading] = useState(false);
-  const [showOther, setShowOther] = useState(false);
+  const [categoryVisibility, setCategoryVisibility] = useState<CategoryVisibility>(
+    DEFAULT_CATEGORY_VISIBILITY,
+  );
   const [focusId, setFocusId] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
 
@@ -52,18 +76,22 @@ export function Workspace() {
   const [diffs, setDiffs] = useState<DiffItem[]>([]);
   const [candidates, setCandidates] = useState<AreaRecord[]>([]);
 
+  const setCategoryVisible = useCallback((key: AreaCategory, on: boolean) => {
+    setCategoryVisibility((prev) => ({ ...prev, [key]: on }));
+  }, []);
+
   const visibleList = useMemo(() => {
     const q = filter.trim().toUpperCase();
     return areas.filter((a) => {
-      if (!showOther && a.category === "OTHER" && !a.mapDefaultVisible) return false;
-      if (!q) return a.mapDefaultVisible || showOther;
+      if (!categoryVisibility[a.category]) return false;
+      if (!q) return true;
       return (
         a.id.includes(q) ||
         a.name.toUpperCase().includes(q) ||
         a.shortName.toUpperCase().includes(q)
       );
     });
-  }, [areas, filter, showOther]);
+  }, [areas, filter, categoryVisibility]);
 
   const loadGitHub = useCallback(async () => {
     setLoading(true);
@@ -338,7 +366,7 @@ export function Workspace() {
             areas={areas}
             candidates={candidates}
             focusId={focusId}
-            showOther={showOther}
+            categoryVisibility={categoryVisibility}
           />
           <div className="pointer-events-none absolute bottom-3 left-3 rounded-md bg-white/90 px-2 py-1 text-[11px] text-slate-600 shadow">
             Red/gray = R/D 4F · Light gray = R/D 3 · Yellow = TRA/PCA/CBA · Amber dashed = SUP candidate
@@ -346,13 +374,35 @@ export function Workspace() {
         </main>
 
         <aside className="flex min-h-0 flex-col gap-3 border-l border-slate-200/80 bg-white/70 p-3">
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Areas</p>
-            <div className="flex items-center gap-2">
-              <Label htmlFor="other" className="text-xs text-slate-600">
-                Show OTHER
-              </Label>
-              <Switch id="other" checked={showOther} onCheckedChange={setShowOther} />
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Areas</p>
+          <div className="rounded-md border border-slate-200 bg-white px-2 py-2">
+            <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-500">
+              Map layers
+            </p>
+            <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
+              {MAP_TOGGLE_CATEGORIES.map(({ key, label }) => (
+                <div key={key} className="flex items-center justify-between gap-2">
+                  <Label
+                    htmlFor={`layer-${key}`}
+                    className="text-xs text-slate-700"
+                    title={
+                      key === "OTHER"
+                        ? "TCT / STCA / FS and other non-R/D areas"
+                        : undefined
+                    }
+                  >
+                    {label}{" "}
+                    <span className="font-normal text-slate-400">
+                      ({counts[key]})
+                    </span>
+                  </Label>
+                  <Switch
+                    id={`layer-${key}`}
+                    checked={categoryVisibility[key]}
+                    onCheckedChange={(on) => setCategoryVisible(key, on)}
+                  />
+                </div>
+              ))}
             </div>
           </div>
           <Input
