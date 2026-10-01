@@ -6,9 +6,13 @@ import {
 } from "./classify";
 
 describe("areaOmitsLabel", () => {
-  it("flags ESR94 / R94 only", () => {
+  it("flags ESR94 / ESR102 / ESR127 (and short forms)", () => {
     expect(areaOmitsLabel({ id: "ESR94", shortName: "R94" })).toBe(true);
     expect(areaOmitsLabel({ id: "esr94", shortName: "r94" })).toBe(true);
+    expect(areaOmitsLabel({ id: "ESR102", shortName: "R102" })).toBe(true);
+    expect(areaOmitsLabel({ id: "R102" })).toBe(true);
+    expect(areaOmitsLabel({ id: "ESR127", shortName: "R127" })).toBe(true);
+    expect(areaOmitsLabel({ id: "R127" })).toBe(true);
     expect(areaOmitsLabel({ id: "ESR117", shortName: "R117" })).toBe(false);
   });
 });

@@ -3,9 +3,10 @@ import {
   shouldEmitNoAupActivationComment,
   stripTempoGroupHeaders,
 } from "./activation";
-import { areaOmitsLabel } from "./classify";
+import { areaOmitsLabel, omitLabelDesignators, shortFromDesignator } from "./classify";
 import { closeRing, parseTopSkyCoordPair, toTopSkyCoord } from "./coords";
 import { formatLimits } from "./limits";
+import { designatorOrderKey, normalizeDesignator } from "./names";
 import type { AreaLabel, AreaRecord } from "./types";
 import { isExpired } from "./validity";
 
@@ -140,18 +141,126 @@ export function needsFullBlockRewrite(area: AreaRecord): boolean {
     area.category === "D" ||
     area.category === "PCA";
   if (!rewritable) return false;
-  // Omit-label areas with an active LABEL still in rawBlock must be rewritten.
-  if (
-    areaOmitsLabel(area) &&
-    area.rawBlock &&
-    /(^|\n)(?!\/\/)LABEL:/im.test(area.rawBlock)
-  ) {
-    return true;
-  }
+  // Max: R94/R102/R127 — always rewrite so `// NO LABEL` is emitted (no active LABEL).
+  if (areaOmitsLabel(area)) return true;
   // Untouched baseline: keep rawBlock as-is (label/name patched separately).
   if (area.provenance.source === "topsky" && area.rawBlock) return false;
   // Accepted ENR/SUP/PCA, regenerated circles, or any empty-rawBlock working copy.
   return !area.rawBlock || area.provenance.source !== "topsky";
+}
+
+/**
+ * Ensure known omit-label designators (incl. fully commented UAV stubs like ESR127)
+ * have `// NO LABEL` and no active LABEL line in the exported file.
+ */
+export function ensureOmitLabelMarkers(fileText: string): string {
+  let text = fileText.replace(/\r\n/g, "\n");
+  for (const id of omitLabelDesignators()) {
+    const shortName = shortFromDesignator(id);
+    const found = findAreaBlock(text, {
+      id,
+      shortName,
+    } as AreaRecord);
+    if (!found) continue;
+    let block = found.block;
+    block = block.replace(/(^|\n)(?!\/\/)LABEL:/gim, "$1//LABEL:");
+    if (/\/\/\s*NO LABEL\b/i.test(block)) {
+      if (block !== found.block) {
+        text =
+          text.slice(0, found.start) +
+          block +
+          text.slice(found.start + found.block.length);
+      }
+      continue;
+    }
+    if (/^(?:\/\/)?AREA:/im.test(block)) {
+      block = block.replace(/^((?:\/\/)?AREA:[^\n]*\n)/im, "$1// NO LABEL\n");
+    } else {
+      block = block.replace(/^(\/\/[^\n]*\n)/, "$1// NO LABEL\n");
+    }
+    text =
+      text.slice(0, found.start) +
+      block +
+      text.slice(found.start + found.block.length);
+  }
+  return text;
+}
+
+/**
+ * Insert position for a new permanent R/D block: keep AIP/ESAA section order.
+ * Never place before START OF TEMPO when the permanent section lives after END OF TEMPO
+ * (live ESAA file has TEMPO first — that bug floated ESR94 to the top of the file).
+ */
+export function findPermanentRdInsertIndex(
+  text: string,
+  area: AreaRecord,
+): number {
+  const key = designatorOrderKey(area.id);
+  const startTempo = findSectionBannerSpan(
+    text,
+    "START OF TEMPO R AND D AREAS",
+  );
+  const endTempo = findSectionBannerSpan(text, "END OF TEMPO R AND D AREAS");
+  const pca = findSectionBannerSpan(text, "MILITARY EXERCISE AREAS (PCA)");
+
+  const zones: [number, number][] = [];
+  const tempoFirst =
+    !!startTempo && !!endTempo && endTempo.start > startTempo.end;
+  if (tempoFirst) {
+    // ESAA live layout: TEMPO → permanent R/D → PCA
+    zones.push([endTempo!.end, pca?.start ?? text.length]);
+  } else if (startTempo) {
+    // Older / test layout: permanent before TEMPO
+    zones.push([0, startTempo.start]);
+    if (endTempo) zones.push([endTempo.end, pca?.start ?? text.length]);
+  } else if (endTempo) {
+    zones.push([endTempo.end, pca?.start ?? text.length]);
+  } else {
+    zones.push([0, pca?.start ?? text.length]);
+  }
+
+  let insertAt = zones[0]?.[0] ?? 0;
+  let sawPredecessor = false;
+
+  for (const [zs, ze] of zones) {
+    const slice = text.slice(zs, ze);
+    const re = /\/\/(ES[RD]\d+[A-Z]*)\b/gi;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(slice))) {
+      const otherId = normalizeDesignator(m[1]!);
+      const otherKey = designatorOrderKey(otherId);
+      const abs = zs + m.index;
+      if (otherKey < key) {
+        const found = findAreaBlock(text, {
+          id: otherId,
+          shortName: shortFromDesignator(otherId),
+        } as AreaRecord);
+        if (found) {
+          insertAt = found.start + found.block.length;
+          // Prefer sitting after trailing blank lines of the predecessor block.
+          while (
+            insertAt < text.length &&
+            (text[insertAt] === "\n" || text[insertAt] === "\r")
+          ) {
+            insertAt++;
+          }
+          sawPredecessor = true;
+        }
+      } else if (otherKey > key) {
+        if (!sawPredecessor) insertAt = abs;
+        return insertAt;
+      }
+    }
+  }
+
+  if (!sawPredecessor && tempoFirst && endTempo) {
+    insertAt = endTempo.end;
+  }
+  // Guard: never insert into/before the leading TEMPO section on ESAA layout.
+  if (tempoFirst && startTempo && insertAt <= startTempo.start) {
+    insertAt = endTempo!.end;
+  }
+  return insertAt;
 }
 
 /**
@@ -208,27 +317,22 @@ export function applyAcceptedAreaBlocks(
     }
 
     if (otherMissing.length) {
-      const insertBlocks =
-        otherMissing
-          .map((a) => formatAreaBlock(a, { includeSupHeader: false }).trimEnd())
-          .join("\n\n") + "\n\n";
-      const tempoBanner = findSectionBannerSpan(
-        text,
-        "START OF TEMPO R AND D AREAS",
+      // Insert one-by-one in designator order into the permanent R/D section
+      // (after END OF TEMPO on live ESAA — not before START OF TEMPO).
+      const sorted = [...otherMissing].sort((a, b) =>
+        designatorOrderKey(a.id).localeCompare(designatorOrderKey(b.id)),
       );
-      if (tempoBanner) {
-        // Before the full START banner — never split //// / // / START.
-        text =
-          text.slice(0, tempoBanner.start) +
-          insertBlocks +
-          text.slice(tempoBanner.start);
-      } else {
-        text = text.trimEnd() + "\n\n" + insertBlocks;
+      for (const area of sorted) {
+        const block =
+          formatAreaBlock(area, { includeSupHeader: false }).trimEnd() +
+          "\n\n";
+        const at = findPermanentRdInsertIndex(text, area);
+        text = text.slice(0, at) + block + text.slice(at);
       }
     }
   }
 
-  return text;
+  return ensureOmitLabelMarkers(text);
 }
 
 /** ESAA tempo convention: `182/2025` → `182/25`. */

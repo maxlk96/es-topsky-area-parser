@@ -1,4 +1,8 @@
 import { FIR_BORDER_EXCLUSION } from "@/lib/aip/fir-border";
+import {
+  IFR_PLANNING_EXCLUSION,
+  isIfrPlanningOnlyArea,
+} from "@/lib/aip/ifr-planning";
 import { mentionsUasActivity } from "@/lib/areas/classify";
 import { isExpired } from "@/lib/areas/validity";
 import { normalizeDesignator } from "@/lib/areas/names";
@@ -8,7 +12,7 @@ import type { AreaRecord } from "@/lib/areas/types";
  * Merge ENR 5.1 permanent R/D with tempo SUP candidates.
  * Same designator: prefer a non-expired SUP (tempo override), else ENR 5.1.
  * Does not invent names; preserves needsReview.
- * FIR-border areas stay excluded — never overwritten by auto-parse.
+ * FIR-border / IFR-planning-only areas stay excluded — never overwrite baseline.
  */
 export function mergeAipReloadCandidates(
   enr51: AreaRecord[],
@@ -20,17 +24,34 @@ export function mergeAipReloadCandidates(
 
   for (const a of enr51) {
     const id = normalizeDesignator(a.id);
+    // Keep IFR-planning-only (ESD184Z/ESD185Z) as excluded stubs for Verify —
+    // never as drawable/acceptables.
+    if (isIfrPlanningOnlyArea(a) || a.exclusionReason === IFR_PLANNING_EXCLUSION) {
+      byId.set(id, {
+        ...a,
+        id,
+        shortName: a.shortName || id.replace(/^ES/i, ""),
+        coordinates: [],
+        exclusionReason: IFR_PLANNING_EXCLUSION,
+        mapDefaultVisible: false,
+      });
+      continue;
+    }
     byId.set(id, { ...a, id, shortName: a.shortName || id.replace(/^ES/i, "") });
   }
 
   for (const a of sups) {
     if (a.exclusionReason === "uas_only") continue;
+    if (a.exclusionReason === IFR_PLANNING_EXCLUSION || isIfrPlanningOnlyArea(a)) {
+      continue; // never import IFR-planning-only from SUP
+    }
     if (mentionsUasActivity(`${a.name} ${a.provenance.rawComment || ""}`)) continue;
     if (isExpired(a, now)) continue;
     const id = normalizeDesignator(a.id);
     const prev = byId.get(id);
-    // Baseline FIR-border geometry is hand-maintained — do not let SUP/ENR reparse replace it.
+    // Baseline FIR-border / IFR-planning geometry — do not let SUP reparse replace it.
     if (prev?.exclusionReason === FIR_BORDER_EXCLUSION) continue;
+    if (prev?.exclusionReason === IFR_PLANNING_EXCLUSION) continue;
     if (a.exclusionReason === FIR_BORDER_EXCLUSION) {
       byId.set(id, {
         ...a,

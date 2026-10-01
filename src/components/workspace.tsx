@@ -40,6 +40,10 @@ import {
   sortDiffItems,
 } from "@/lib/areas/diff";
 import { mergePcaAcceptPreservingLabel } from "@/lib/aip/parse-pca-echarts";
+import {
+  IFR_PLANNING_NOTE,
+  isIfrPlanningOnlyArea,
+} from "@/lib/aip/ifr-planning";
 import { activationLabel } from "@/lib/areas/activation";
 import {
   areaOmitsLabel,
@@ -47,6 +51,7 @@ import {
   mergeEnrAcceptPreservingNoaiw,
 } from "@/lib/areas/classify";
 import { defaultLabelPosition } from "@/lib/areas/default-label";
+import { upsertAreaInOrder } from "@/lib/areas/names";
 import { parseTopSkyBuffer } from "@/lib/areas/parse-topsky";
 import {
   applyAcceptedAreaBlocks,
@@ -400,6 +405,8 @@ export function Workspace() {
         (a) =>
           a.exclusionReason !== "fir_border" &&
           a.exclusionReason !== "uas_only" &&
+          a.exclusionReason !== "ifr_planning_only" &&
+          !isIfrPlanningOnlyArea(a) &&
           (a.coordinates.length >= 3 || a.boundCircle),
       );
       setCandidates((prev) => mergeCandidateAreas(prev, drawable));
@@ -443,6 +450,8 @@ export function Workspace() {
         (a) =>
           a.exclusionReason !== "fir_border" &&
           a.exclusionReason !== "uas_only" &&
+          a.exclusionReason !== "ifr_planning_only" &&
+          !isIfrPlanningOnlyArea(a) &&
           (a.coordinates.length >= 3 || a.boundCircle),
       );
       setCandidates((prev) => mergeCandidateAreas(prev, drawable));
@@ -554,6 +563,10 @@ export function Workspace() {
 
   const acceptDiff = (item: DiffItem) => {
     if (item.status !== "new" && item.status !== "changed") return;
+    if (isIfrPlanningOnlyArea(item.candidate)) {
+      toast.error(`${item.candidate.id}: ${IFR_PLANNING_NOTE}`);
+      return;
+    }
     if (item.candidate.needsReview === "missing_name") {
       toast.error(
         `${item.candidate.id} needs an AIP name — use Rename before Accept`,
@@ -561,17 +574,11 @@ export function Workspace() {
       return;
     }
     setAreas((prev) => {
-      const next = [...prev];
-      const idx = next.findIndex(
+      const existing = prev.find(
         (a) => a.id.toUpperCase() === item.candidate.id.toUpperCase(),
       );
-      const accepted = buildAcceptedArea(
-        item.candidate,
-        idx >= 0 ? next[idx] : undefined,
-      );
-      if (idx >= 0) next[idx] = accepted;
-      else next.unshift(accepted);
-      return next;
+      const accepted = buildAcceptedArea(item.candidate, existing);
+      return upsertAreaInOrder(prev, accepted);
     });
     const dropId = item.candidate.id.toUpperCase();
     setDiffs((d) =>
@@ -625,7 +632,8 @@ export function Workspace() {
     const acceptable = diffs.filter(
       (d) =>
         (d.status === "new" || d.status === "changed") &&
-        d.candidate.needsReview !== "missing_name",
+        d.candidate.needsReview !== "missing_name" &&
+        !isIfrPlanningOnlyArea(d.candidate),
     );
     const skippedMissingName = diffs.filter(
       (d) =>
@@ -641,17 +649,13 @@ export function Workspace() {
       return;
     }
     setAreas((prev) => {
-      const next = [...prev];
+      let next = prev;
       for (const item of acceptable) {
-        const idx = next.findIndex(
+        const existing = next.find(
           (a) => a.id.toUpperCase() === item.candidate.id.toUpperCase(),
         );
-        const accepted = buildAcceptedArea(
-          item.candidate,
-          idx >= 0 ? next[idx] : undefined,
-        );
-        if (idx >= 0) next[idx] = accepted;
-        else next.unshift(accepted);
+        const accepted = buildAcceptedArea(item.candidate, existing);
+        next = upsertAreaInOrder(next, accepted);
       }
       return next;
     });
@@ -675,8 +679,8 @@ export function Workspace() {
     setAreas((prev) =>
       prev.map((a) => {
         if (areaFeatureId(a) !== fid) return a;
-        // Never invent a LABEL for unlabeled baseline areas.
-        if (!a.label) return a;
+        // Never invent a LABEL for unlabeled / omit-label areas (R94/R102/R127).
+        if (!a.label || areaOmitsLabel(a)) return a;
         const label = { ...a.label, lat, lon };
         // Keep rawBlock in sync so baseline (tempo + permanent) export patches LABEL.
         const rawBlock = a.rawBlock
@@ -697,7 +701,7 @@ export function Workspace() {
     let resetId: string | null = null;
     setAreas((prev) => {
       const hit = prev.find((a) => areaFeatureId(a) === fid);
-      if (!hit?.label) return prev; // never invent
+      if (!hit?.label || areaOmitsLabel(hit)) return prev; // never invent / omit-label
       const pos = defaultLabelPosition(hit);
       if (!pos) return prev;
       const label = { ...hit.label, lat: pos.lat, lon: pos.lon };

@@ -5,6 +5,53 @@ export function normalizeDesignator(id: string): string {
   return id.replace(/^(ES[RD])0+(\d)/i, "$1$2").toUpperCase();
 }
 
+/**
+ * Stable sort key for permanent R/D (AIP / ESAA section order).
+ * e.g. ESR94 → `R:0094:`, ESD184Z → `D:0184:Z`.
+ */
+export function designatorOrderKey(id: string): string {
+  const n = normalizeDesignator(id);
+  const m = n.match(/^ES([RD])(\d+)([A-Z]*)$/i);
+  if (!m) return `Z:${n}`;
+  return `${m[1]!.toUpperCase()}:${m[2]!.padStart(4, "0")}:${(m[3] || "").toUpperCase()}`;
+}
+
+/**
+ * Insert (or replace) an accepted area without floating new permanent R/D to index 0.
+ * Tempo areas append; permanent R/D slot by designator order among non-tempo rows.
+ */
+export function upsertAreaInOrder<T extends { id: string; section?: string }>(
+  list: T[],
+  area: T,
+): T[] {
+  const idUp = area.id.toUpperCase();
+  const existingIdx = list.findIndex((a) => a.id.toUpperCase() === idUp);
+  if (existingIdx >= 0) {
+    const next = [...list];
+    next[existingIdx] = area;
+    return next;
+  }
+  if (area.section === "tempo") {
+    return [...list, area];
+  }
+  const key = designatorOrderKey(area.id);
+  let insertAt = list.length;
+  for (let i = 0; i < list.length; i++) {
+    const row = list[i]!;
+    if (row.section === "tempo") {
+      insertAt = i;
+      break;
+    }
+    if (designatorOrderKey(row.id) > key) {
+      insertAt = i;
+      break;
+    }
+  }
+  const next = [...list];
+  next.splice(insertAt, 0, area);
+  return next;
+}
+
 /** True when name is empty or only the designator / short id (R41A, ESR41A). */
 export function isDesignatorOnlyName(
   name: string | undefined | null,

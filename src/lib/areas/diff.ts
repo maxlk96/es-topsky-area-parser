@@ -2,6 +2,11 @@ import {
   FIR_BORDER_EXCLUSION,
   FIR_BORDER_NOTE,
 } from "@/lib/aip/fir-border";
+import {
+  IFR_PLANNING_EXCLUSION,
+  IFR_PLANNING_NOTE,
+  isIfrPlanningOnlyArea,
+} from "@/lib/aip/ifr-planning";
 import { supNumberKey } from "@/lib/aip/sup-catalogue";
 import { activationLabel } from "./activation";
 import { isUasOnlyText } from "./classify";
@@ -263,6 +268,19 @@ export function diffCandidates(
         },
         existing: byId.get(candId),
         notes: [FIR_BORDER_NOTE],
+      });
+      continue;
+    }
+    if (isIfrPlanningOnlyArea(normalized)) {
+      items.push({
+        status: "excluded",
+        candidate: {
+          ...normalized,
+          exclusionReason: IFR_PLANNING_EXCLUSION,
+          coordinates: [],
+        },
+        existing: byId.get(candId),
+        notes: [IFR_PLANNING_NOTE],
       });
       continue;
     }

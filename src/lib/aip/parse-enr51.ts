@@ -20,6 +20,11 @@ import {
   FIR_BORDER_EXCLUSION,
   hasFirBorderLateralLimits,
 } from "@/lib/aip/fir-border";
+import {
+  IFR_PLANNING_EXCLUSION,
+  isIfrPlanningOnlyDesignator,
+  isIfrPlanningOnlyText,
+} from "@/lib/aip/ifr-planning";
 
 function stripHtml(html: string): string {
   return html
@@ -132,6 +137,38 @@ export function parseEnr51Html(
           rawComment: chunk.slice(0, 400),
         },
         exclusionReason: FIR_BORDER_EXCLUSION,
+        needsReview,
+        rawBlock: "",
+        section: "other",
+      });
+      continue;
+    }
+
+    // FBZ / IFR flight-planning-only (e.g. ESD184Z, ESD185Z) — not for TopSky.
+    // Check before geometry so known designators still appear as excluded stubs.
+    if (
+      isIfrPlanningOnlyDesignator(id) ||
+      isIfrPlanningOnlyText(chunk)
+    ) {
+      seen.add(id);
+      areas.push({
+        id,
+        shortName,
+        name: nameUp,
+        category,
+        areaTypeCode: "3",
+        coordinates: [],
+        limits: parseLimits(chunk),
+        activation: { type: "NONE" },
+        directives: [],
+        mapDefaultVisible: false,
+        noaiw: false,
+        provenance: {
+          source: "enr51",
+          amdtId: meta.amdtId,
+          rawComment: chunk.slice(0, 400),
+        },
+        exclusionReason: IFR_PLANNING_EXCLUSION,
         needsReview,
         rawBlock: "",
         section: "other",

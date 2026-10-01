@@ -68,10 +68,21 @@ export function shortFromDesignator(id: string): string {
 
 /**
  * Areas that must stay unlabeled in TopSky (no active LABEL line).
- * ESR94 Sörentorp — same ops policy as other Stockholm urban circles that
- * keep only a commented `//LABEL:` in the live ESAA file.
+ * Max: R94 / R102 / R127 → emit/preserve `// NO LABEL`; never active LABEL.
  */
-const OMIT_LABEL_IDS = new Set(["ESR94", "R94"]);
+const OMIT_LABEL_IDS = new Set([
+  "ESR94",
+  "R94",
+  "ESR102",
+  "R102",
+  "ESR127",
+  "R127",
+]);
+
+/** Full designators (ESR…) that omit LABEL — for file-wide export passes. */
+export function omitLabelDesignators(): string[] {
+  return ["ESR94", "ESR102", "ESR127"];
+}
 
 export function areaOmitsLabel(
   area: Pick<{ id: string; shortName?: string }, "id" | "shortName">,

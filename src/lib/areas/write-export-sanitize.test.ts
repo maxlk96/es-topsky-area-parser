@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { toTopSkyCoord } from "./coords";
 import {
   applyAcceptedAreaBlocks,
+  ensureOmitLabelMarkers,
   findSectionBannerSpan,
   formatAreaBlock,
   formatExcludedSupStub,
@@ -283,7 +284,95 @@ N059.24.37.000 E020.15.55.000
     expect(out).not.toMatch(/ACTIVE:AUP:ESD309/);
   });
 
-  it("ESR94 emits // NO LABEL and never an active LABEL", () => {
+  it("ESR94 / ESR102 / ESR127 emit // NO LABEL and never an active LABEL", () => {
+    for (const spec of [
+      {
+        id: "ESR94",
+        shortName: "R94",
+        name: "SÖRENTORP",
+        lat: 59.3966667,
+        lon: 17.9913889,
+      },
+      {
+        id: "ESR102",
+        shortName: "R102",
+        name: "HAGA",
+        lat: 59.3638889,
+        lon: 18.0388889,
+      },
+      {
+        id: "ESR127",
+        shortName: "R127",
+        name: "SOLNA",
+        lat: 59.3525,
+        lon: 18.0105556,
+      },
+    ] as const) {
+      const area: AreaRecord = {
+        id: spec.id,
+        shortName: spec.shortName,
+        name: spec.name,
+        category: "R",
+        areaTypeCode: "3",
+        coordinates: [
+          [spec.lon, spec.lat],
+          [spec.lon + 0.01, spec.lat],
+          [spec.lon + 0.01, spec.lat + 0.01],
+          [spec.lon, spec.lat],
+        ],
+        limits: [0, 15],
+        activation: { type: "ALWAYS" },
+        directives: [],
+        label: { lat: spec.lat, lon: spec.lon, text: spec.name },
+        mapDefaultVisible: true,
+        noaiw: false,
+        boundCircle: { lat: spec.lat, lon: spec.lon, radiusNm: 0.5 },
+        provenance: { source: "enr51" },
+        rawBlock: "",
+        section: "other",
+      };
+      const block = formatAreaBlock(area, { includeSupHeader: false });
+      expect(block).toContain("// NO LABEL");
+      expect(block).toMatch(/\/\/LABEL:N059\./);
+      expect(block).not.toMatch(/(^|\n)LABEL:/);
+      expect(needsFullBlockRewrite(area)).toBe(true);
+    }
+  });
+
+  it("inserts new permanent R/D after END OF TEMPO in ESAA order (not file top)", () => {
+    const file = `// intro
+
+${TEMPO_START_BANNER}
+
+//ESR700 TEMP
+AREA:4F:  R700
+
+${TEMPO_END_BANNER}
+
+//ESR93 STYRSÖ
+AREA:4F:  R93
+ACTIVE:AUP:ESR93
+LABEL:N057.36.31.964:E011.45.33.870:STYRSÖ
+LIMITS:0:999
+N057.39.18.000 E011.43.17.000
+N057.39.18.000 E011.47.01.000
+N057.37.21.000 E011.47.35.000
+N057.39.18.000 E011.43.17.000
+
+//ESR95 MARSTRAND
+AREA:4F:  R95
+ACTIVE:AUP:ESR95
+LABEL:N057.55.54.799:E011.41.47.102:MARSTRAND
+LIMITS:0:999
+N057.57.11.000 E011.43.06.000
+N057.56.23.000 E011.44.50.000
+N057.54.35.000 E011.42.22.000
+N057.57.11.000 E011.43.06.000
+
+//      MILITARY EXERCISE AREAS (PCA)
+//A1
+AREA:T: A1
+`;
     const r94: AreaRecord = {
       id: "ESR94",
       shortName: "R94",
@@ -299,8 +388,6 @@ N059.24.37.000 E020.15.55.000
       limits: [0, 15],
       activation: { type: "ALWAYS" },
       directives: [],
-      // Even if a centre label sneaks in, export must suppress it.
-      label: { lat: 59.3966667, lon: 17.9913889, text: "SÖRENTORP" },
       mapDefaultVisible: true,
       noaiw: false,
       boundCircle: { lat: 59.3966667, lon: 17.9913889, radiusNm: 0.5 },
@@ -308,11 +395,41 @@ N059.24.37.000 E020.15.55.000
       rawBlock: "",
       section: "other",
     };
-    const block = formatAreaBlock(r94, { includeSupHeader: false });
-    expect(block).toContain("// NO LABEL");
-    expect(block).toMatch(/\/\/LABEL:N059\./);
-    expect(block).not.toMatch(/(^|\n)LABEL:/);
-    expect(needsFullBlockRewrite(r94)).toBe(true);
+    const out = applyAcceptedAreaBlocks(file, [r94]);
+    const iStart = out.indexOf("START OF TEMPO");
+    const iEnd = out.indexOf("END OF TEMPO");
+    const i93 = out.indexOf("//ESR93");
+    const i94 = out.indexOf("//ESR94");
+    const i95 = out.indexOf("//ESR95");
+    expect(i94).toBeGreaterThan(iEnd);
+    expect(i94).toBeGreaterThan(i93);
+    expect(i94).toBeLessThan(i95);
+    expect(i94).toBeGreaterThan(iStart);
+    // Must not float to the top (before TEMPO).
+    expect(i94).toBeGreaterThan(iStart);
+    const r94Block = out.slice(i94, i95);
+    expect(r94Block).toContain("// NO LABEL");
+    expect(r94Block).not.toMatch(/(^|\n)LABEL:/);
+  });
+
+  it("ensureOmitLabelMarkers stamps // NO LABEL on R102 / R127 file blocks", () => {
+    const file = `//ESR102 Haga
+AREA:4F:  R102
+//LABEL:N059.21.50.000:E018.02.20.000:HAGA
+ACTIVE:1
+LIMITS:0:20
+
+//ESR127 SOLNA (UAV Only)
+//AREA:3:  R127
+//ACTIVE:AUP:ESR127
+//LABEL:N059.21.09.000:E018.00.38.000:SOLNA
+//LIMITS:0:20
+//N059.21.38.980 E018.00.38.000
+`;
+    const out = ensureOmitLabelMarkers(file);
+    expect(out).toMatch(/AREA:4F:\s+R102\n\/\/ NO LABEL/);
+    expect(out).toMatch(/\/\/AREA:3:\s+R127\n\/\/ NO LABEL/);
+    expect(out).not.toMatch(/(^|\n)LABEL:/);
   });
 
   it("sanitize rewrites legacy seconds=60, pads Nddd, cleans LABEL junk", () => {

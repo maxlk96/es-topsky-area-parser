@@ -20,6 +20,11 @@ import {
   FIR_BORDER_EXCLUSION,
   hasFirBorderLateralLimits,
 } from "@/lib/aip/fir-border";
+import {
+  IFR_PLANNING_EXCLUSION,
+  isIfrPlanningOnlyDesignator,
+  isIfrPlanningOnlyText,
+} from "@/lib/aip/ifr-planning";
 
 function stripHtml(html: string): string {
   return html
@@ -207,6 +212,44 @@ function buildAreaFromSection(
         rawComment: remarks.slice(0, 500),
       },
       exclusionReason: FIR_BORDER_EXCLUSION,
+      needsReview,
+      rawBlock: "",
+      section: "tempo",
+    };
+  }
+
+  // IFR flight-planning-only FBZ (e.g. ESD184Z / ESD185Z) — never Accept.
+  if (
+    isIfrPlanningOnlyDesignator(id) ||
+    isIfrPlanningOnlyText(section.chunk) ||
+    isIfrPlanningOnlyText(remarks)
+  ) {
+    return {
+      id,
+      shortName,
+      name,
+      category,
+      areaTypeCode: "3",
+      coordinates: [],
+      limits: parseLimitsFromChunk(section.chunk, text),
+      activation: { type: "NONE" },
+      directives: [],
+      mapDefaultVisible: false,
+      noaiw: false,
+      provenance: {
+        source: "sup",
+        amdtId: meta.amdtId,
+        supNumber: meta.supNumber,
+        href: meta.href,
+        validFrom: validity.validFrom,
+        validTo: validity.validTo,
+        validityWindows: validity.windows?.map((w) => ({
+          from: w.validFrom,
+          to: w.validTo,
+        })),
+        rawComment: remarks.slice(0, 500),
+      },
+      exclusionReason: IFR_PLANNING_EXCLUSION,
       needsReview,
       rawBlock: "",
       section: "tempo",

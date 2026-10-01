@@ -106,7 +106,7 @@ export function parseTopSkyText(text: string, encoding = "latin1"): ParseResult 
       rawBlock = patchNameInBlock(rawBlock, id, resolved.name, label);
     }
 
-    // ESR94 etc.: never keep an active LABEL (comment it out + // NO LABEL marker).
+    // ESR94 / ESR102 / ESR127: never keep an active LABEL (+ // NO LABEL marker).
     let exportLabel = label;
     if (areaOmitsLabel({ id, shortName })) {
       exportLabel = undefined;
@@ -114,10 +114,14 @@ export function parseTopSkyText(text: string, encoding = "latin1"): ParseResult 
         rawBlock = rawBlock.replace(/(^|\n)(?!\/\/)LABEL:/gim, "$1//LABEL:");
       }
       if (!/\/\/\s*NO LABEL\b/i.test(rawBlock)) {
-        rawBlock = rawBlock.replace(
-          /(^AREA:[^\n]*\n)/im,
-          "$1// NO LABEL\n",
-        );
+        if (/^(?:\/\/)?AREA:/im.test(rawBlock)) {
+          rawBlock = rawBlock.replace(
+            /^((?:\/\/)?AREA:[^\n]*\n)/im,
+            "$1// NO LABEL\n",
+          );
+        } else {
+          rawBlock = rawBlock.replace(/^(\/\/[^\n]*\n)/, "$1// NO LABEL\n");
+        }
       }
     }
 
