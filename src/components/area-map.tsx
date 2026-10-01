@@ -41,6 +41,8 @@ type Props = {
   /** Show existing LABELs and allow drag-nudge (never invents labels). */
   labelPlacer?: boolean;
   onLabelMove?: (fid: string, lat: number, lon: number) => void;
+  /** Double-click marker → reset LABEL to default (centre / centroid). */
+  onLabelReset?: (fid: string) => void;
   layerVisibility: LayerVisibility;
 };
 
@@ -279,6 +281,7 @@ export function AreaMap({
   onSelectKey,
   labelPlacer = false,
   onLabelMove,
+  onLabelReset,
   layerVisibility,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
@@ -287,10 +290,12 @@ export function AreaMap({
   const onHoverRef = useRef(onHoverKey);
   const onSelectRef = useRef(onSelectKey);
   const onLabelMoveRef = useRef(onLabelMove);
+  const onLabelResetRef = useRef(onLabelReset);
   const markersRef = useRef<Marker[]>([]);
   onHoverRef.current = onHoverKey;
   onSelectRef.current = onSelectKey;
   onLabelMoveRef.current = onLabelMove;
+  onLabelResetRef.current = onLabelReset;
   const latestRef = useRef({
     visible: [] as AreaRecord[],
     candidates: [] as AreaRecord[],
@@ -405,6 +410,7 @@ export function AreaMap({
       const fid = areaFeatureId(a);
       const text = (a.label!.text || a.name || a.id).toUpperCase();
       const el = makeLabelEl(text, selectedKey === fid, !!a.labelEdited);
+      el.title = "Drag to move · double-click to reset to default";
       const marker = new Marker({ element: el, draggable: true })
         .setLngLat([a.label!.lon, a.label!.lat])
         .addTo(map);
@@ -419,6 +425,12 @@ export function AreaMap({
       });
       el.addEventListener("click", (ev) => {
         ev.stopPropagation();
+        onSelectRef.current?.(fid);
+      });
+      el.addEventListener("dblclick", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        onLabelResetRef.current?.(fid);
         onSelectRef.current?.(fid);
       });
       markersRef.current.push(marker);

@@ -39,6 +39,7 @@ import {
   mentionsUasActivity,
   mergeEnrAcceptPreservingNoaiw,
 } from "@/lib/areas/classify";
+import { defaultLabelPosition } from "@/lib/areas/default-label";
 import { parseTopSkyBuffer } from "@/lib/areas/parse-topsky";
 import {
   applyAcceptedAreaBlocks,
@@ -661,6 +662,28 @@ export function Workspace() {
     );
   }, []);
 
+  /** Double-click LABEL marker → circle centre / polygon centroid (not file custom). */
+  const onLabelReset = useCallback((fid: string) => {
+    let resetId: string | null = null;
+    setAreas((prev) => {
+      const hit = prev.find((a) => areaFeatureId(a) === fid);
+      if (!hit?.label) return prev; // never invent
+      const pos = defaultLabelPosition(hit);
+      if (!pos) return prev;
+      const label = { ...hit.label, lat: pos.lat, lon: pos.lon };
+      const rawBlock = hit.rawBlock
+        ? patchLabelInBlock(hit.rawBlock, label)
+        : hit.rawBlock;
+      resetId = hit.id;
+      return prev.map((a) =>
+        areaFeatureId(a) === fid
+          ? { ...a, label, labelEdited: true, rawBlock }
+          : a,
+      );
+    });
+    if (resetId) toast.message(`${resetId}: LABEL reset to default`);
+  }, []);
+
   const beginRename = useCallback((a: AreaRecord) => {
     const fid = areaFeatureId(a);
     setSelectedKey(fid);
@@ -1004,6 +1027,7 @@ export function Workspace() {
             onSelectKey={setSelectedKey}
             labelPlacer={labelPlacer}
             onLabelMove={onLabelMove}
+            onLabelReset={onLabelReset}
             layerVisibility={layerVisibility}
           />
           <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded-md bg-white/90 px-2 py-1 text-[11px] text-slate-600 shadow">
@@ -1053,8 +1077,8 @@ export function Workspace() {
               <div className="min-w-0">
                 <p className="text-xs font-semibold text-slate-800">Label placer</p>
                 <p className="text-[10px] leading-snug text-slate-500">
-                  Drag any existing LABEL (baseline or accepted SUP) on the map. Areas with
-                  no LABEL stay untouched on export.
+                  Drag any existing LABEL on the map; double-click to reset to default
+                  (circle centre / polygon centroid). No LABEL → left untouched on export.
                 </p>
               </div>
               <Checkbox
