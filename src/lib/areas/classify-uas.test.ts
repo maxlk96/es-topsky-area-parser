@@ -45,6 +45,9 @@ describe("mentionsUasActivity", () => {
 describe("isUasOnlyText", () => {
   it("still recognizes classic UAS-only wording", () => {
     expect(isUasOnlyText("EXCLUDED. ONLY UAS operations.")).toBe(true);
+    expect(isUasOnlyText("// 19/26 - Valid to 31 DEC 2026\n// EXCLUDED. ONLY UAS (BVLOS)")).toBe(
+      true,
+    );
   });
 
   it("flags ESR113-style drone-prohibition R areas (UAV only)", () => {
@@ -61,10 +64,21 @@ describe("isUasOnlyText", () => {
     expect(isUasOnlyText("//ESR113 Stockholm (UAV only)")).toBe(true);
   });
 
-  it("does not treat military R that merely include UAS as UAS-only", () => {
+  it("does not treat military/ops SUPs that mention UAV/UAS as UAS-only", () => {
     expect(
       isUasOnlyText(
         "Military activities including aviation operations with UAS up to 400 ft AGL. Permission obtainable from STOCKHOLM ACC.",
+      ),
+    ).toBe(false);
+    // SUP 101-style: UAS operating inside a real D area — affects everyone → select.
+    expect(
+      isUasOnlyText(
+        "ESD811 Ragunda and ESD812 Koviken are established for UAS flying beyond visual line of sight (BVLOS).",
+      ),
+    ).toBe(false);
+    expect(
+      isUasOnlyText(
+        "Temporary restricted area ESR791 Möja established for military aviation operations with UAV.",
       ),
     ).toBe(false);
   });

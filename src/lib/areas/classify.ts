@@ -92,7 +92,7 @@ export function areaOmitsLabel(
   return OMIT_LABEL_IDS.has(id) || OMIT_LABEL_IDS.has(short);
 }
 
-/** Any UAS/UAV/BVLOS-style mention (subject or body) — skip auto-select. */
+/** Any UAS/UAV/BVLOS-style mention (subject or body) — informational, not auto-select. */
 export function mentionsUasActivity(text: string): boolean {
   return (
     /\bUAS\b|\bUAV\b|\bBVLOS\b|\bRPAS\b|\bDRONES?\b/i.test(text) ||
@@ -101,20 +101,34 @@ export function mentionsUasActivity(text: string): boolean {
 }
 
 /**
- * UAS/drone-only → not for VATSIM (stricter than mentionsUasActivity).
- * Includes permanent ENR drone-prohibition R areas (e.g. ESR113 Stockholm)
- * already marked "(UAV only)" in TopSkyAreas.txt.
+ * True only when the area *merely prohibits drone flying* and does not affect
+ * other aviation (VATSIM-irrelevant). Examples: ESR113 “Drone flying is
+ * prohibited”, “(UAV only)”, `EXCLUDED. ONLY UAS` stubs.
+ *
+ * Does **not** match military/ops SUPs that mention UAV/UAS/BVLOS operating
+ * inside a real R/D — those affect the airspace for everyone and stay selected.
  */
 export function isUasOnlyText(text: string): boolean {
   const t = text.toUpperCase();
   // Fold Swedish vowels so DRÖNAR… matches after uppercasing.
   const n = t.replace(/[ÅÄ]/g, "A").replace(/Ö/g, "O");
+
+  // Ops / manned aviation purpose → never treat as drone-prohibition-only.
+  if (
+    /\bMILITARY\s+AVIATION\b/.test(t) ||
+    /(?:MILITARY\s+)?AVIATION\s+OPERATIONS/.test(t) ||
+    /\bFLYGVERKSAMHET\b/.test(n) ||
+    /PERMISSION OBTAINABLE FROM/.test(t) ||
+    /TILLSTAND KAN ERHALLAS FRAN/.test(n)
+  ) {
+    return false;
+  }
+
   return (
     /\bONLY\s+UAS\b/.test(t) ||
     /\bUAS\s*\/\s*UAV\s+ONLY\b/.test(t) ||
     /\bUAV\s+ONLY\b/.test(t) ||
     /\bUAS\s+ONLY\b/.test(t) ||
-    (/\bBVLOS\b/.test(t) && /\bUAS\b/.test(t) && !/\bMILITARY\s+AVIATION\b/.test(t)) ||
     /\bEXCLUDED\.\s*ONLY\s+UAS\b/.test(t) ||
     // ESR113 Stockholm / ESR127 Solna style — sole purpose is drone restriction
     /\bDRONE\s+FLYING\s+IS\s+PROHIBITED\b/.test(t) ||

@@ -394,7 +394,8 @@ export function Workspace() {
           `Removed ${stale.removedCount} stale tempo SUP area(s) (expired or not in AMDT)`,
         );
       }
-      // Activate all area SUPs by default; leave UAV/UAS/BVLOS-only deselected.
+      // Activate all area SUPs by default; leave drone-prohibition-only deselected
+      // (R113-style). Ops SUPs that mention UAV/UAS inside a real R/D stay selected.
       const areaRows = list.filter((x: SupCatalogueRow) => x.likelyArea);
       const decisions = await Promise.all(
         areaRows.map(async (s) => {
@@ -429,7 +430,7 @@ export function Workspace() {
       setSelectedSups(sel);
       toast.success(
         skippedUas
-          ? `${areaRows.length} area SUPs · selected ${auto} (skipped ${skippedUas} UAS/UAV/BVLOS-only)`
+          ? `${areaRows.length} area SUPs · selected ${auto} (skipped ${skippedUas} drone-prohibition only)`
           : `${areaRows.length} area SUPs · selected all ${auto}`,
       );
     } catch (e) {
