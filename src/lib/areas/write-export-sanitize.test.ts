@@ -207,6 +207,53 @@ N059.20.26.000 E017.52.30.000
     expect(out).toContain("// EXCLUDED. ONLY UAS (BVLOS)");
   });
 
+  it("re-emits // NO AUP ACTIVATION for preserved manual tempo SUP areas", () => {
+    const file = `//      START OF TEMPO R AND D AREAS
+// 299/25 - Valid to 31 DEC 2026
+// NO AUP ACTIVATION
+
+//ESD309 ARGUS
+AREA:4F:  D309
+NOAIW
+LABEL:N057.45.38.379:E015.51.58.559:ARGUS
+LIMITS:520:660
+N059.24.37.000 E020.15.55.000
+N059.13.36.000 E020.35.51.000
+N056.25.02.000 E012.12.46.000
+N056.38.47.000 E012.02.05.000
+N059.24.37.000 E020.15.55.000
+
+//      END OF TEMPO R AND D AREAS
+`;
+    const d309 = tempoArea({
+      id: "ESD309",
+      shortName: "D309",
+      name: "ARGUS",
+      category: "D",
+      activation: { type: "MANUAL" },
+      provenance: { source: "topsky", supNumber: "299/25", validTo: "31 DEC 2026" },
+      rawBlock: `// 299/25 - Valid to 31 DEC 2026
+//ESD309 ARGUS
+AREA:4F:  D309
+NOAIW
+LABEL:N057.45.38.379:E015.51.58.559:ARGUS
+LIMITS:520:660
+N059.24.37.000 E020.15.55.000
+N059.13.36.000 E020.35.51.000
+N056.25.02.000 E012.12.46.000
+N056.38.47.000 E012.02.05.000
+N059.24.37.000 E020.15.55.000
+`,
+    });
+    const out = mergeTempoSection(file, [d309], {
+      now: new Date("2026-06-01T12:00:00Z"),
+    });
+    expect(out).toContain("// 299/25 - Valid to 31 DEC 2026");
+    expect(out).toContain("// NO AUP ACTIVATION");
+    expect(out).toContain("//ESD309 ARGUS");
+    expect(out).not.toMatch(/ACTIVE:AUP:ESD309/);
+  });
+
   it("ESR94 emits // NO LABEL and never an active LABEL", () => {
     const r94: AreaRecord = {
       id: "ESR94",

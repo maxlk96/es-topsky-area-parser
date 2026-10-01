@@ -1,3 +1,7 @@
+import {
+  isNoAupActivation,
+  stripTempoGroupHeaders,
+} from "./activation";
 import { areaOmitsLabel } from "./classify";
 import { closeRing, parseTopSkyCoordPair, toTopSkyCoord } from "./coords";
 import { formatLimits } from "./limits";
@@ -243,12 +247,7 @@ export function formatAreaBlock(
     const validity = formatSupValidityLine(area);
     if (validity) lines.push(validity);
     // ESAA: comment when SUP area has no AUP activation line
-    if (
-      area.provenance.supNumber &&
-      (area.activation?.type === "MANUAL" ||
-        area.activation?.type === "NONE" ||
-        !area.activation)
-    ) {
+    if (area.provenance.supNumber && isNoAupActivation(area)) {
       lines.push("// NO AUP ACTIVATION");
     }
   }
@@ -303,7 +302,11 @@ export function formatAreaBlock(
   return lines.join("\n");
 }
 
-/** Group rewritten SUP areas so one `// NNN/YY - Valid to` heads the group. */
+/**
+ * Emit tempo blocks grouped by SUP. One `// NNN/YY - Valid to` (+ optional
+ * `// NO AUP ACTIVATION`) heads each group. Preserved topsky rawBlocks keep
+ * geometry; accepted/toggled areas are fully rewritten.
+ */
 export function formatTempoAreaBlocks(areas: AreaRecord[]): string {
   const groups = new Map<string, AreaRecord[]>();
   const order: string[] = [];
@@ -324,21 +327,54 @@ export function formatTempoAreaBlocks(areas: AreaRecord[]): string {
     if (first.provenance.supNumber) {
       const validity = formatSupValidityLine(first);
       if (validity) chunks.push(validity);
-      const noAup = group.every(
-        (a) =>
-          a.activation?.type === "MANUAL" ||
-          a.activation?.type === "NONE" ||
-          !a.activation,
-      );
+      const noAup = group.every((a) => isNoAupActivation(a));
       if (noAup) chunks.push("// NO AUP ACTIVATION");
       if (validity || noAup) chunks.push("");
     }
     for (const a of group) {
-      chunks.push(formatAreaBlock(a, { includeSupHeader: false }).trimEnd());
+      if (!needsFullBlockRewrite(a) && a.rawBlock) {
+        let block = stripTempoGroupHeaders(a.rawBlock);
+        if (a.nameEdited) {
+          block = patchNameInBlock(block, a.id, a.name, a.label);
+        } else if (a.labelEdited && a.label) {
+          block = patchLabelInBlock(block, a.label);
+        }
+        // Activation toggles clear rawBlock; if raw still present, sync ACTIVE lines.
+        block = syncActivationInBlock(block, a);
+        chunks.push(block.trimEnd());
+      } else {
+        chunks.push(formatAreaBlock(a, { includeSupHeader: false }).trimEnd());
+      }
       chunks.push("");
     }
   }
   return chunks.join("\n");
+}
+
+/** Keep ACTIVE:AUP lines in a preserved rawBlock aligned with working activation. */
+function syncActivationInBlock(block: string, area: AreaRecord): string {
+  const lines = block.replace(/\r\n/g, "\n").split("\n");
+  const withoutActive = lines.filter(
+    (l) => !/^ACTIVE:(AUP|AUP_GROUP|1)\b/i.test(l.trim()),
+  );
+  const insertAt = withoutActive.findIndex((l) => /^AREA:/i.test(l.trim()));
+  if (insertAt < 0) return block;
+  const activeLines: string[] = [];
+  if (area.activation?.type === "AUP" && area.activation.key) {
+    activeLines.push(`ACTIVE:AUP:${area.activation.key}`);
+  } else if (area.activation?.type === "AUP_GROUP" && area.activation.key) {
+    activeLines.push(`ACTIVE:AUP_GROUP:${area.activation.key}`);
+  } else if (area.activation?.type === "ALWAYS") {
+    activeLines.push("ACTIVE:1");
+  }
+  // MANUAL / NONE → no ACTIVE line (paired with // NO AUP ACTIVATION at group head)
+  let pos = insertAt + 1;
+  // Keep NOAIW immediately after AREA when present
+  if (pos < withoutActive.length && /^NOAIW\b/i.test(withoutActive[pos]!.trim())) {
+    pos += 1;
+  }
+  withoutActive.splice(pos, 0, ...activeLines);
+  return withoutActive.join("\n");
 }
 
 /** Rewrite a space-form coord or LABEL line that still has seconds=60 / unpadded Ndd. */
@@ -444,26 +480,8 @@ export function mergeTempoSection(
     inTempo.length ? inTempo : tempoAreas.filter((a) => !isExpired(a, now) && a.mapDefaultVisible)
   );
 
-  const preserved: AreaRecord[] = [];
-  const rewritten: AreaRecord[] = [];
-  for (const a of activeTempo) {
-    if (!needsFullBlockRewrite(a) && a.rawBlock) preserved.push(a);
-    else rewritten.push(a);
-  }
-
-  const preservedBlocks = preserved
-    .map((a) => {
-      let block = a.rawBlock;
-      if (a.nameEdited) {
-        block = patchNameInBlock(block, a.id, a.name, a.label);
-      } else if (a.labelEdited && a.label) {
-        block = patchLabelInBlock(block, a.label);
-      }
-      return block.trimEnd() + "\n";
-    })
-    .join("\n");
-
-  const rewrittenBlocks = formatTempoAreaBlocks(rewritten);
+  // One pass: SUP Valid-to / NO AUP headers + preserved or rewritten bodies.
+  const tempoBlocks = formatTempoAreaBlocks(activeTempo);
 
   // EXCLUDED stubs: new from scan/diffs + untouched stubs from original tempo.
   const excludedFromWork = [
@@ -510,8 +528,7 @@ export function mergeTempoSection(
   }
 
   const blocks = [
-    preservedBlocks,
-    rewrittenBlocks,
+    tempoBlocks,
     ...newExcludedBlocks,
     ...preservedExcluded.map((s) => s.trimEnd() + "\n"),
   ]
