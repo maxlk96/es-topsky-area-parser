@@ -19,11 +19,28 @@ describe("coords", () => {
     expect(c!.lon).toBeCloseTo(15 + 48 / 60 + 54 / 3600, 5);
   });
 
-  it("round-trips TopSky space form", () => {
+  it("round-trips TopSky space form with Nddd pad", () => {
     const line = toTopSkyCoord(59.410277, 20.265277);
+    expect(line).toMatch(/^N059\.\d{2}\.\d{2}\.000 E020\.\d{2}\.\d{2}\.000$/);
     const back = parseTopSkyCoordPair(line);
     expect(back).not.toBeNull();
     expect(back!.lat).toBeCloseTo(59.410277, 3);
+  });
+
+  it("never emits seconds=60 (TopSky invalid)", () => {
+    // Values that Math.round(sec) would push to 60 without carry
+    const samples = [
+      [58 + 39 / 60 + 59.6 / 3600, 15 + 24 / 60 + 59.7 / 3600],
+      [66 + 55 / 60 + 55 / 3600, 17 + 55 / 60 + 59.9 / 3600],
+      [59.5, 13.5],
+    ] as const;
+    for (const [lat, lon] of samples) {
+      const line = toTopSkyCoord(lat, lon);
+      expect(line).not.toMatch(/\.60\.000/);
+      for (const m of line.matchAll(/\d+\.(\d+)\.(\d+)\.(\d+)/g)) {
+        expect(Number(m[2])).toBeLessThan(60);
+      }
+    }
   });
 
   it("parses unpadded LABEL seconds (ESAA style)", () => {

@@ -59,19 +59,39 @@ function pad2(n: number): string {
   return String(Math.floor(n)).padStart(2, "0");
 }
 
+/**
+ * Convert decimal degrees → ESAA TopSky `Nddd.mm.ss.mmm Eddd.mm.ss.mmm`.
+ * Carries rounding so seconds never become 60 (TopSky rejects that as invalid).
+ * Latitude degrees are zero-padded to 3 digits to match the live sectorfile.
+ */
 export function toTopSkyCoord(lat: number, lon: number): string {
   const ns = lat >= 0 ? "N" : "S";
   const ew = lon >= 0 ? "E" : "W";
-  const alat = Math.abs(lat);
-  const alon = Math.abs(lon);
-  const latD = Math.floor(alat);
-  const latM = Math.floor((alat - latD) * 60);
-  const latS = ((alat - latD) * 60 - latM) * 60;
-  const lonD = Math.floor(alon);
-  const lonM = Math.floor((alon - lonD) * 60);
-  const lonS = ((alon - lonD) * 60 - lonM) * 60;
-  const latStr = `${ns}${pad2(latD)}.${pad2(latM)}.${pad2(Math.round(latS))}.000`;
-  const lonStr = `${ew}${pad3(lonD)}.${pad2(lonM)}.${pad2(Math.round(lonS))}.000`;
+
+  const toDms = (absDeg: number): [number, number, number] => {
+    // Work in integer thousandths of a second to avoid float edge cases.
+    let totalMs = Math.round(Math.abs(absDeg) * 3600 * 1000);
+    let sMs = totalMs % 60000;
+    totalMs = (totalMs - sMs) / 60000;
+    let m = totalMs % 60;
+    let d = (totalMs - m) / 60;
+    // sMs is 0..59999 → whole seconds 0..59 after /1000 floor; we emit .000
+    let s = Math.floor(sMs / 1000);
+    if (s >= 60) {
+      s = 0;
+      m += 1;
+    }
+    if (m >= 60) {
+      m = 0;
+      d += 1;
+    }
+    return [d, m, s];
+  };
+
+  const [latD, latM, latS] = toDms(lat);
+  const [lonD, lonM, lonS] = toDms(lon);
+  const latStr = `${ns}${pad3(latD)}.${pad2(latM)}.${pad2(latS)}.000`;
+  const lonStr = `${ew}${pad3(lonD)}.${pad2(lonM)}.${pad2(lonS)}.000`;
   return `${latStr} ${lonStr}`;
 }
 

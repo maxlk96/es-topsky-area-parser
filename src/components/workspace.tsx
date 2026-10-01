@@ -35,12 +35,14 @@ import { diffCandidates, sortDiffItems } from "@/lib/areas/diff";
 import { mentionsUasActivity } from "@/lib/areas/classify";
 import { parseTopSkyBuffer } from "@/lib/areas/parse-topsky";
 import {
+  applyAcceptedAreaBlocks,
   applyLabelEdits,
   applyNameEdits,
   encodeLatin1,
   mergeTempoSection,
   patchLabelInBlock,
   patchNameInBlock,
+  sanitizeExportedTopSkyText,
   toTopSkyName,
 } from "@/lib/areas/write-topsky";
 import type {
@@ -447,6 +449,39 @@ export function Workspace() {
     }
   };
 
+  const buildAcceptedArea = (
+    candidate: AreaRecord,
+    existing?: AreaRecord,
+  ): AreaRecord => {
+    // Keep permanent vs tempo placement from baseline when overwriting.
+    const section =
+      existing?.section ??
+      candidate.section ??
+      (candidate.provenance.source === "enr51" ? "other" : "tempo");
+    let accepted: AreaRecord = {
+      ...candidate,
+      section,
+      mapDefaultVisible: true,
+      // Force full block rewrite on export (geometry / LIMITS / name).
+      rawBlock: "",
+    };
+    if (accepted.boundCircle) {
+      const red = redensifyBoundCircleAuto(accepted.boundCircle);
+      const c = accepted.boundCircle;
+      accepted = {
+        ...accepted,
+        coordinates: red.coordinates,
+        circleSpacingDeg: red.circleSpacingDeg,
+        label: {
+          lat: c.lat,
+          lon: c.lon,
+          text: accepted.label?.text || accepted.name,
+        },
+      };
+    }
+    return accepted;
+  };
+
   const acceptDiff = (item: DiffItem) => {
     if (item.status !== "new" && item.status !== "changed") return;
     if (item.candidate.needsReview === "missing_name") {
@@ -460,28 +495,10 @@ export function Workspace() {
       const idx = next.findIndex(
         (a) => a.id.toUpperCase() === item.candidate.id.toUpperCase(),
       );
-      let accepted: AreaRecord = {
-        ...item.candidate,
-        // Preserve ENR permanent vs tempo SUP section — never force OTHER into tempo.
-        section: item.candidate.section ?? "tempo",
-        mapDefaultVisible: true,
-      };
-      // Circles: densify at auto Spacing°; LABEL stays on BOUND:C centre.
-      if (accepted.boundCircle) {
-        const red = redensifyBoundCircleAuto(accepted.boundCircle);
-        const c = accepted.boundCircle;
-        accepted = {
-          ...accepted,
-          coordinates: red.coordinates,
-          circleSpacingDeg: red.circleSpacingDeg,
-          label: {
-            lat: c.lat,
-            lon: c.lon,
-            text: accepted.label?.text || accepted.name,
-          },
-          rawBlock: "",
-        };
-      }
+      const accepted = buildAcceptedArea(
+        item.candidate,
+        idx >= 0 ? next[idx] : undefined,
+      );
       if (idx >= 0) next[idx] = accepted;
       else next.unshift(accepted);
       return next;
@@ -545,26 +562,10 @@ export function Workspace() {
         const idx = next.findIndex(
           (a) => a.id.toUpperCase() === item.candidate.id.toUpperCase(),
         );
-        let accepted: AreaRecord = {
-          ...item.candidate,
-          section: item.candidate.section ?? "tempo",
-          mapDefaultVisible: true,
-        };
-        if (accepted.boundCircle) {
-          const red = redensifyBoundCircleAuto(accepted.boundCircle);
-          const c = accepted.boundCircle;
-          accepted = {
-            ...accepted,
-            coordinates: red.coordinates,
-            circleSpacingDeg: red.circleSpacingDeg,
-            label: {
-              lat: c.lat,
-              lon: c.lon,
-              text: accepted.label?.text || accepted.name,
-            },
-            rawBlock: "",
-          };
-        }
+        const accepted = buildAcceptedArea(
+          item.candidate,
+          idx >= 0 ? next[idx] : undefined,
+        );
         if (idx >= 0) next[idx] = accepted;
         else next.unshift(accepted);
       }
@@ -672,13 +673,24 @@ export function Workspace() {
       toast.error("Load a baseline first");
       return;
     }
-    // Tempo merge, then patch LABEL coords / renamed names (never invents LABEL lines).
-    const merged = applyNameEdits(
-      applyLabelEdits(mergeTempoSection(rawText, areas), areas),
-      areas,
+    // Tempo merge → rewrite accepted permanent ENR/AIP blocks → label/name nudges.
+    const merged = sanitizeExportedTopSkyText(
+      applyNameEdits(
+        applyLabelEdits(
+          applyAcceptedAreaBlocks(mergeTempoSection(rawText, areas), areas),
+          areas,
+        ),
+        areas,
+      ),
     );
     const moved = areas.filter((a) => a.labelEdited && !a.nameEdited).length;
     const renamed = areas.filter((a) => a.nameEdited).length;
+    const rewritten = areas.filter(
+      (a) =>
+        a.section !== "tempo" &&
+        !a.rawBlock &&
+        (a.provenance.source === "enr51" || a.provenance.source === "sup"),
+    ).length;
     const buf = encodeLatin1(merged);
     const blob = new Blob([Uint8Array.from(buf)], {
       type: "text/plain;charset=ISO-8859-1",
@@ -690,6 +702,7 @@ export function Workspace() {
     a.click();
     URL.revokeObjectURL(url);
     const bits: string[] = [];
+    if (rewritten) bits.push(`${rewritten} AIP block(s)`);
     if (renamed) bits.push(`${renamed} renamed`);
     if (moved) bits.push(`${moved} label(s) moved`);
     toast.success(

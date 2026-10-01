@@ -7,13 +7,16 @@ export { isExpired } from "./validity";
 
 /** TopSky LABEL / //ES comment text: ALL CAPS, keep ÅÄÖ (sv-SE). */
 export function toTopSkyName(text: string): string {
-  return text.trim().toLocaleUpperCase("sv-SE");
+  return text
+    .replace(/[<>{}]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLocaleUpperCase("sv-SE");
 }
 
 export function formatLabelLine(label: AreaLabel): string {
   const latLon = toTopSkyCoord(label.lat, label.lon).split(" ");
-  // Preserve caller text (rename may keep intentional casing; new blocks usually UPPER).
-  const text = label.text || "";
+  const text = toTopSkyName(label.text || "");
   return `LABEL:${latLon[0]}:${latLon[1]}:${text}`;
 }
 
@@ -95,7 +98,13 @@ function findAreaBlock(
     start = m.index;
   }
   const rest = text.slice(start);
-  const endRel = rest.search(/\n\/\/ES[A-Z0-9]/i);
+  // Stop at next //ES… designator OR tempo section markers (not "//      START…").
+  const ends = [
+    rest.search(/\n\/\/ES[A-Z0-9]/i),
+    rest.search(/\n\/\/\s*START OF TEMPO/i),
+    rest.search(/\n\/\/\s*END OF TEMPO/i),
+  ].filter((n) => n >= 0);
+  const endRel = ends.length ? Math.min(...ends) : -1;
   const block = endRel >= 0 ? rest.slice(0, endRel) : rest;
   return { start, block };
 }
@@ -114,6 +123,58 @@ function patchBlockInFile(
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** True when Accept/AIP/redensify cleared rawBlock — full block must be rewritten on export. */
+export function needsFullBlockRewrite(area: AreaRecord): boolean {
+  if (area.exclusionReason) return false;
+  if (!(area.category === "R" || area.category === "D")) return false;
+  // Untouched baseline: keep rawBlock as-is (label/name patched separately).
+  if (area.provenance.source === "topsky" && area.rawBlock) return false;
+  // Accepted ENR/SUP, regenerated circles, or any empty-rawBlock working copy.
+  return !area.rawBlock || area.provenance.source !== "topsky";
+}
+
+/**
+ * Replace permanent (non-tempo) R/D blocks with accepted AIP/ENR geometry.
+ * Tempo is handled by mergeTempoSection; this covers Reload-from-AIP Accepts
+ * that stay in section "other".
+ */
+export function applyAcceptedAreaBlocks(
+  fileText: string,
+  areas: AreaRecord[],
+): string {
+  let text = fileText.replace(/\r\n/g, "\n");
+  const toWrite = areas.filter(
+    (a) => a.section !== "tempo" && needsFullBlockRewrite(a),
+  );
+  const missing: AreaRecord[] = [];
+
+  for (const area of toWrite) {
+    const found = findAreaBlock(text, area);
+    const block = formatAreaBlock(area).trimEnd() + "\n";
+    if (!found) {
+      missing.push(area);
+      continue;
+    }
+    text =
+      text.slice(0, found.start) +
+      block +
+      text.slice(found.start + found.block.length);
+  }
+
+  if (missing.length) {
+    const insertBlocks = missing.map((a) => formatAreaBlock(a).trimEnd()).join("\n\n") + "\n\n";
+    const tempoMark = text.indexOf("START OF TEMPO R AND D AREAS");
+    if (tempoMark >= 0) {
+      const lineStart = text.lastIndexOf("\n", tempoMark) + 1;
+      text = text.slice(0, lineStart) + insertBlocks + text.slice(lineStart);
+    } else {
+      text = text.trimEnd() + "\n\n" + insertBlocks;
+    }
+  }
+
+  return text;
 }
 
 export function formatAreaBlock(area: AreaRecord): string {
@@ -143,7 +204,8 @@ export function formatAreaBlock(area: AreaRecord): string {
   }
   if (area.boundCircle) {
     const c = toTopSkyCoord(area.boundCircle.lat, area.boundCircle.lon).split(" ");
-    lines.push(`BOUND:C:${c[0]}:${c[1]}:${area.boundCircle.radiusNm}`);
+    const r = Number(area.boundCircle.radiusNm.toFixed(2));
+    lines.push(`BOUND:C:${c[0]}:${c[1]}:${r}`);
   }
   const ring = closeRing(area.coordinates);
   for (const [lon, lat] of ring) {
@@ -151,6 +213,37 @@ export function formatAreaBlock(area: AreaRecord): string {
   }
   lines.push("");
   return lines.join("\n");
+}
+
+/**
+ * Final pass before download: trim EOL spaces, drop whitespace-only lines,
+ * and rewrite any LABEL/coord lines that still contain seconds=60 (legacy).
+ */
+export function sanitizeExportedTopSkyText(text: string): string {
+  const lines = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+  const out: string[] = [];
+  for (const raw of lines) {
+    const line = raw.replace(/[ \t]+$/g, "");
+    if (line.length === 0) {
+      // Keep true blank separators; drop space-only lines.
+      if (raw.length === 0) out.push("");
+      continue;
+    }
+    out.push(line);
+  }
+  // Collapse runs of >2 blank lines
+  const collapsed: string[] = [];
+  let blanks = 0;
+  for (const line of out) {
+    if (line === "") {
+      blanks++;
+      if (blanks <= 2) collapsed.push(line);
+    } else {
+      blanks = 0;
+      collapsed.push(line);
+    }
+  }
+  return collapsed.join("\n").replace(/\n*$/, "\n");
 }
 
 const TEMPO_START = "//      START OF TEMPO R AND D AREAS";
@@ -173,7 +266,9 @@ export function mergeTempoSection(
       .filter((a) => !isExpired(a, now))
       .map(formatAreaBlock)
       .join("\n");
-    return `${text.trimEnd()}\n\n${TEMPO_START}\n${tempoBlocks}${TEMPO_END}\n`;
+    return sanitizeExportedTopSkyText(
+      `${text.trimEnd()}\n\n${TEMPO_START}\n${tempoBlocks}${TEMPO_END}\n`,
+    );
   }
 
   // Find line starts
@@ -197,8 +292,8 @@ export function mergeTempoSection(
 
   const blocks = (inTempo.length ? inTempo : tempoAreas.filter((a) => !isExpired(a, now)))
     .map((a) => {
-      // Prefer preserving rawBlock for untouched topsky areas
-      if (a.provenance.source === "topsky" && a.rawBlock && !a.exclusionReason) {
+      // Untouched baseline tempo: keep rawBlock (optional label/name patch).
+      if (!needsFullBlockRewrite(a) && a.rawBlock) {
         let block = a.rawBlock;
         if (a.nameEdited) {
           block = patchNameInBlock(block, a.id, a.name, a.label);
@@ -208,6 +303,7 @@ export function mergeTempoSection(
         }
         return block.trimEnd() + "\n";
       }
+      // Accepted SUP / cleared rawBlock → full rewrite (geometry + LIMITS + name).
       return formatAreaBlock(a);
     })
     .join("\n");
@@ -219,7 +315,7 @@ export function mergeTempoSection(
 
   const head = text.slice(0, afterStartLine + 1);
   const tail = text.slice(endLineStart);
-  return `${head}\n${blocks}\n${tail}`;
+  return sanitizeExportedTopSkyText(`${head}\n${blocks}\n${tail}`);
 }
 
 export function encodeLatin1(text: string): Uint8Array {
