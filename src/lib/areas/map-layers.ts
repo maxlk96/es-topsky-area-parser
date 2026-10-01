@@ -15,23 +15,19 @@ export type LayerKey =
 
 export type LayerVisibility = Record<LayerKey, boolean>;
 
-/**
- * Defaults per Max: all area layers on.
- * UAS/UAV/BVLOS-only areas stay off via exclusionReason / isUasOnlyArea
- * (not via these toggles).
- */
+/** Defaults per Max: only R and D on. */
 export const DEFAULT_LAYER_VISIBILITY: LayerVisibility = {
   R: true,
   D: true,
-  P: true,
-  TRA: true,
-  CBA: true,
-  PCA: true,
-  PCA_SUB: true,
-  FS: true,
-  TCT: true,
-  STCA: true,
-  OTHER: true,
+  P: false,
+  TRA: false,
+  CBA: false,
+  PCA: false,
+  PCA_SUB: false,
+  FS: false,
+  TCT: false,
+  STCA: false,
+  OTHER: false,
 };
 
 export type LayerGroupId = "rd" | "tra_cba" | "pca" | "other";
@@ -80,7 +76,7 @@ export const LAYER_GROUPS: LayerGroup[] = [
   {
     id: "other",
     title: "Other / system",
-    hint: "Plugin / system volumes",
+    hint: "Plugin / system volumes (off by default)",
     toggles: [
       { key: "FS", label: "FS" },
       { key: "TCT", label: "TCT" },

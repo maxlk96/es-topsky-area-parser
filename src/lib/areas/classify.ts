@@ -49,8 +49,8 @@ export function classifyFromName(
   if (/^(ED|EK|EP)/i.test(name)) {
     return { category: name.startsWith("D") ? "D" : "R", mapDefaultVisible: true };
   }
-  // M, S, TCTA, STCA, FS, … — on by default (layer toggles); UAS-only stays off separately.
-  return { category: "OTHER", mapDefaultVisible: true };
+  // M, S, TCTA, STCA, FS, …
+  return { category: "OTHER", mapDefaultVisible: false };
 }
 
 export function designatorFromShort(shortName: string): string {

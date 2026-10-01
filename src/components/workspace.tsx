@@ -52,7 +52,7 @@ import {
 import { activationLabel } from "@/lib/areas/activation";
 import {
   areaOmitsLabel,
-  mentionsUasActivity,
+  isUasOnlyText,
   mergeEnrAcceptPreservingNoaiw,
 } from "@/lib/areas/classify";
 import {
@@ -394,24 +394,23 @@ export function Workspace() {
           `Removed ${stale.removedCount} stale tempo SUP area(s) (expired or not in AMDT)`,
         );
       }
-      // Auto-check likely-area SUPs newest-first, but skip any with UAS/UAV/BVLOS
-      // in the subject *or* SUP body (e.g. 101/2026 — UAS only in the description).
-      const likelyRows = list.filter((x: SupCatalogueRow) => x.likelyArea);
+      // Activate all area SUPs by default; leave UAV/UAS/BVLOS-only deselected.
+      const areaRows = list.filter((x: SupCatalogueRow) => x.likelyArea);
       const decisions = await Promise.all(
-        likelyRows.map(async (s) => {
-          if (mentionsUasActivity(s.subject)) {
+        areaRows.map(async (s) => {
+          if (isUasOnlyText(s.subject)) {
             return { href: s.href, auto: false as const };
           }
           try {
             const probe = await fetch(
               `/api/amdt/${encodeURIComponent(amdtId)}/sup/uas?path=${encodeURIComponent(s.href)}`,
             );
-            const body = (await probe.json()) as { mentionsUas?: boolean };
-            if (probe.ok && body.mentionsUas) {
+            const body = (await probe.json()) as { uasOnly?: boolean };
+            if (probe.ok && body.uasOnly) {
               return { href: s.href, auto: false as const };
             }
           } catch {
-            // Network glitch — keep subject-clean SUPs eligible.
+            // Network glitch — keep non-UAS-only SUPs selected.
           }
           return { href: s.href, auto: true as const };
         }),
@@ -430,8 +429,8 @@ export function Workspace() {
       setSelectedSups(sel);
       toast.success(
         skippedUas
-          ? `${likelyRows.length} area SUPs · auto-selected ${auto} (skipped ${skippedUas} with UAS/UAV/BVLOS)`
-          : `${likelyRows.length} area SUPs · auto-selected ${auto}`,
+          ? `${areaRows.length} area SUPs · selected ${auto} (skipped ${skippedUas} UAS/UAV/BVLOS-only)`
+          : `${areaRows.length} area SUPs · selected all ${auto}`,
       );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Scan failed");

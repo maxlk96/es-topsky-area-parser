@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { eaipRoot } from "@/lib/aip/amdt";
-import { mentionsUasActivity } from "@/lib/areas/classify";
+import { isUasOnlyText, mentionsUasActivity } from "@/lib/areas/classify";
 
 type Ctx = { params: Promise<{ id: string }> };
 
-/** Lightweight UAS/UAV/BVLOS probe of a SUP HTML body (for Scan auto-select). */
+/** Lightweight UAS probe of a SUP HTML body (for Scan auto-select). */
 export async function GET(req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
   const folder = decodeURIComponent(id);
@@ -22,13 +22,20 @@ export async function GET(req: Request, ctx: Ctx) {
     const res = await fetch(url, { next: { revalidate: 3600 } });
     if (!res.ok) {
       return NextResponse.json(
-        { error: `SUP fetch ${res.status}`, mentionsUas: false, url },
+        {
+          error: `SUP fetch ${res.status}`,
+          mentionsUas: false,
+          uasOnly: false,
+          url,
+        },
         { status: 502 },
       );
     }
     const html = await res.text();
     return NextResponse.json({
       mentionsUas: mentionsUasActivity(html),
+      /** Stricter — only drone-only SUPs stay deselected on Scan. */
+      uasOnly: isUasOnlyText(html) && !/military aviation/i.test(html),
       htmlLength: html.length,
     });
   } catch (e) {
@@ -36,6 +43,7 @@ export async function GET(req: Request, ctx: Ctx) {
       {
         error: e instanceof Error ? e.message : "failed",
         mentionsUas: false,
+        uasOnly: false,
       },
       { status: 500 },
     );
