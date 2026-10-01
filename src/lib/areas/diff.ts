@@ -1,6 +1,6 @@
 import { isUasOnlyText } from "./classify";
-import { isExpired } from "./write-topsky";
 import type { AreaRecord, DiffItem } from "./types";
+import { isExpired, isUpcoming } from "./validity";
 
 function fingerprint(area: AreaRecord): string {
   const coords = area.coordinates
@@ -41,6 +41,9 @@ export function diffCandidates(
     if (isExpired(candidate, now)) {
       items.push({ status: "expired", candidate, notes: ["Validity ended"] });
       continue;
+    }
+    if (isUpcoming(candidate, now)) {
+      notes.push("Upcoming — not yet in force");
     }
 
     const ex = byId.get(candidate.id.toUpperCase());

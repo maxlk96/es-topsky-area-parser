@@ -1,6 +1,9 @@
 import { toTopSkyCoord, closeRing } from "./coords";
 import { formatLimits } from "./limits";
 import type { AreaLabel, AreaRecord } from "./types";
+import { isExpired } from "./validity";
+
+export { isExpired } from "./validity";
 
 export function formatLabelLine(label: AreaLabel): string {
   const latLon = toTopSkyCoord(label.lat, label.lon).split(" ");
@@ -159,30 +162,6 @@ export function mergeTempoSection(
   const head = text.slice(0, afterStartLine + 1);
   const tail = text.slice(endLineStart);
   return `${head}\n${blocks}\n${tail}`;
-}
-
-export function isExpired(area: AreaRecord, now: Date): boolean {
-  const to = area.provenance.validTo;
-  if (!to) return false;
-  const d = parseLooseDate(to);
-  if (!d) return false;
-  return d.getTime() < now.getTime();
-}
-
-function parseLooseDate(s: string): Date | null {
-  // 31 DEC 2026 / 2026-12-31 / 26DEC31
-  const iso = Date.parse(s);
-  if (!Number.isNaN(iso)) return new Date(iso);
-  const m = s.match(/(\d{1,2})\s+([A-Z]{3})\s+(\d{4})/i);
-  if (m) {
-    const months: Record<string, number> = {
-      JAN: 0, FEB: 1, MAR: 2, APR: 3, MAY: 4, JUN: 5,
-      JUL: 6, AUG: 7, SEP: 8, OCT: 9, NOV: 10, DEC: 11,
-    };
-    const mi = months[m[2].toUpperCase()];
-    if (mi != null) return new Date(Date.UTC(Number(m[3]), mi, Number(m[1]), 23, 59, 59));
-  }
-  return null;
 }
 
 export function encodeLatin1(text: string): Uint8Array {

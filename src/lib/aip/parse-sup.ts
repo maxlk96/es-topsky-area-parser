@@ -13,6 +13,7 @@ import {
 } from "@/lib/areas/coords";
 import { parseAipVerticalToken } from "@/lib/areas/limits";
 import type { AreaRecord } from "@/lib/areas/types";
+import { parseValidityWindow } from "@/lib/areas/validity";
 
 function stripHtml(html: string): string {
   return html
@@ -155,14 +156,7 @@ function buildAreaFromSection(
   );
   const useAup = flyingSup || inferred.reason === "flying_or_ats_permission";
 
-  const validTo =
-    text.match(
-      /(?:to|–|-)\s*(\d{1,2}\s+[A-Z]{3}\s+\d{4})\s*(?:\d{4})?/i,
-    )?.[1] ||
-    text.match(/Valid to\s+(\d{1,2}\s+[A-Z]{3}\s+\d{4})/i)?.[1];
-  const validFrom = text.match(
-    /(\d{1,2}\s+[A-Z]{3}\s+\d{4})\s*(?:0000)?\s*(?:–|-|to)/i,
-  )?.[1];
+  const validity = parseValidityWindow(section.chunk, text, meta);
 
   let label: AreaRecord["label"];
   if (coordinates.length >= 3) {
@@ -204,8 +198,8 @@ function buildAreaFromSection(
       amdtId: meta.amdtId,
       supNumber: meta.supNumber,
       href: meta.href,
-      validFrom,
-      validTo,
+      validFrom: validity.validFrom,
+      validTo: validity.validTo,
       rawComment: remarks.slice(0, 500),
     },
     rawBlock: "",
