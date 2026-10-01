@@ -723,7 +723,7 @@ export function Workspace() {
               </span>
             </button>
             {layersOpen && (
-              <div className="mt-2 max-h-[28vh] space-y-2 overflow-y-auto overflow-x-hidden">
+              <div className="mt-2 max-h-[28vh] space-y-2 overflow-x-hidden overflow-y-auto [scrollbar-gutter:stable]">
                 {LAYER_GROUPS.map((group) => {
                   const gState = groupToggleState(group, layerVisibility);
                   const groupCount = group.toggles.reduce(
@@ -733,11 +733,11 @@ export function Workspace() {
                   return (
                     <div
                       key={group.id}
-                      className="min-w-0 rounded border border-slate-100 bg-slate-50/80 px-2 py-1.5"
+                      className="min-w-0 overflow-x-hidden rounded border border-slate-100 bg-slate-50/80 px-2 py-1.5"
                     >
-                      <div className="mb-1 flex min-w-0 items-start justify-between gap-2">
-                        <div className="min-w-0 flex-1">
-                          <p className="break-words text-xs font-semibold text-slate-800">
+                      <div className="mb-1 flex min-w-0 items-start justify-between gap-2 overflow-x-hidden">
+                        <div className="min-w-0 flex-1 overflow-hidden">
+                          <p className="truncate text-xs font-semibold text-slate-800">
                             {group.title}{" "}
                             <span className="font-normal text-slate-400">
                               ({groupCount})
@@ -747,36 +747,39 @@ export function Workspace() {
                             {group.hint}
                           </p>
                         </div>
-                        <Checkbox
-                          className="mt-0.5 shrink-0"
-                          checked={gState === "all"}
-                          indeterminate={gState === "some"}
-                          onCheckedChange={(value) =>
-                            setGroupVisible(group, value === true)
-                          }
-                          aria-label={`Show group ${group.title}`}
-                        />
+                        {/* Clip checkbox hit-area ::after so it cannot widen the panel */}
+                        <span className="mt-0.5 inline-flex size-4 shrink-0 overflow-hidden">
+                          <Checkbox
+                            checked={gState === "all"}
+                            indeterminate={gState === "some"}
+                            onCheckedChange={(value) =>
+                              setGroupVisible(group, value === true)
+                            }
+                            aria-label={`Show group ${group.title}`}
+                          />
+                        </span>
                       </div>
                       <div className="grid min-w-0 grid-cols-1 gap-y-1">
                         {group.toggles.map(({ key, label }) => (
                           <div
                             key={key}
-                            className="flex min-w-0 items-center justify-between gap-2"
+                            className="flex min-w-0 items-center justify-between gap-2 overflow-x-hidden"
                           >
-                            <span className="min-w-0 flex-1 break-words text-xs text-slate-700">
+                            <span className="min-w-0 flex-1 truncate text-xs text-slate-700">
                               {label}{" "}
                               <span className="text-slate-400">
                                 ({counts[key] ?? 0})
                               </span>
                             </span>
-                            <Checkbox
-                              className="shrink-0"
-                              checked={layerVisibility[key] === true}
-                              onCheckedChange={(value) =>
-                                setLayerVisible(key, value === true)
-                              }
-                              aria-label={`Show ${label} on map`}
-                            />
+                            <span className="inline-flex size-4 shrink-0 overflow-hidden">
+                              <Checkbox
+                                checked={layerVisibility[key] === true}
+                                onCheckedChange={(value) =>
+                                  setLayerVisible(key, value === true)
+                                }
+                                aria-label={`Show ${label} on map`}
+                              />
+                            </span>
                           </div>
                         ))}
                       </div>

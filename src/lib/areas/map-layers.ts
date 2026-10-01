@@ -69,7 +69,7 @@ export const LAYER_GROUPS: LayerGroup[] = [
     hint: "vatiris PCA",
     toggles: [
       { key: "PCA", label: "PCA" },
-      { key: "PCA_SUB", label: "PCA sub-parts" },
+      { key: "PCA_SUB", label: "PCA subs" },
     ],
   },
   {
