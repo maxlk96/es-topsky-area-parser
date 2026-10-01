@@ -30,7 +30,9 @@ type Props = {
   candidates?: AreaRecord[];
   focusId?: string | null;
   hoverKey?: string | null;
+  selectedKey?: string | null;
   onHoverKey?: (key: string | null) => void;
+  onSelectKey?: (key: string | null) => void;
   layerVisibility: LayerVisibility;
 };
 
@@ -194,14 +196,18 @@ export function AreaMap({
   candidates = [],
   focusId,
   hoverKey = null,
+  selectedKey = null,
   onHoverKey,
+  onSelectKey,
   layerVisibility,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const readyRef = useRef(false);
   const onHoverRef = useRef(onHoverKey);
+  const onSelectRef = useRef(onSelectKey);
   onHoverRef.current = onHoverKey;
+  onSelectRef.current = onSelectKey;
   const latestRef = useRef({
     visible: [] as AreaRecord[],
     candidates: [] as AreaRecord[],
@@ -246,8 +252,14 @@ export function AreaMap({
       map.getCanvas().style.cursor = "";
       onHoverRef.current?.(null);
     };
+    const onClick = (e: MapLayerMouseEvent) => {
+      const hit = e.features?.[0];
+      const fid = (hit?.properties?.fid as string | undefined) ?? null;
+      if (fid) onSelectRef.current?.(fid);
+    };
     map.on("mousemove", "areas-fill", onMove);
     map.on("mouseleave", "areas-fill", onLeave);
+    map.on("click", "areas-fill", onClick);
 
     map.on("error", (e) => {
       console.error("[AreaMap]", e.error?.message ?? e);
@@ -278,8 +290,9 @@ export function AreaMap({
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !readyRef.current) return;
-    setHoverFilter(map, hoverKey);
-  }, [hoverKey]);
+    // Prefer live hover; fall back to persistent selection.
+    setHoverFilter(map, hoverKey ?? selectedKey);
+  }, [hoverKey, selectedKey]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -297,7 +310,7 @@ export function AreaMap({
       ],
       { padding: 60, maxZoom: 9, duration: 600 },
     );
-    onHoverRef.current?.(areaFeatureId(hit));
+    onSelectRef.current?.(areaFeatureId(hit));
   }, [focusId, visible, candidates]);
 
   return <div ref={ref} className="h-full w-full min-h-[420px]" />;

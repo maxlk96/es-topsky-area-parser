@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 const AreaMap = dynamic(
@@ -56,7 +56,15 @@ export function Workspace() {
   );
   const [focusId, setFocusId] = useState<string | null>(null);
   const [hoverKey, setHoverKey] = useState<string | null>(null);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
+
+  // When an area is selected from the map, scroll it into view in the list.
+  useEffect(() => {
+    if (!selectedKey) return;
+    const el = document.querySelector(`[data-area-fid="${CSS.escape(selectedKey)}"]`);
+    el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [selectedKey]);
 
   const [amdts, setAmdts] = useState<AmdtEntry[]>([]);
   const [amdtId, setAmdtId] = useState("");
@@ -364,7 +372,9 @@ export function Workspace() {
             candidates={candidates}
             focusId={focusId}
             hoverKey={hoverKey}
+            selectedKey={selectedKey}
             onHoverKey={setHoverKey}
+            onSelectKey={setSelectedKey}
             layerVisibility={layerVisibility}
           />
           <div className="pointer-events-none absolute bottom-3 left-3 rounded-md bg-white/90 px-2 py-1 text-[11px] text-slate-600 shadow">
@@ -446,14 +456,23 @@ export function Workspace() {
               {visibleList.slice(0, 400).map((a) => {
                 const fid = areaFeatureId(a);
                 const hovered = hoverKey === fid;
+                const selected = selectedKey === fid;
                 return (
                 <li key={fid}>
                   <button
                     type="button"
+                    data-area-fid={fid}
                     className={`flex w-full items-start gap-2 px-2 py-1.5 text-left hover:bg-sky-50 ${
-                      hovered ? "bg-sky-50 ring-1 ring-inset ring-sky-300" : ""
+                      selected
+                        ? "bg-sky-100 ring-1 ring-inset ring-sky-400"
+                        : hovered
+                          ? "bg-sky-50 ring-1 ring-inset ring-sky-300"
+                          : ""
                     }`}
-                    onClick={() => setFocusId(a.id)}
+                    onClick={() => {
+                      setSelectedKey(fid);
+                      setFocusId(a.id);
+                    }}
                     onMouseEnter={() => setHoverKey(fid)}
                     onMouseLeave={() => setHoverKey(null)}
                   >
