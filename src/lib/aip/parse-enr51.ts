@@ -11,7 +11,7 @@ import {
   autoSpacingForRadius,
   parseCompactCoord,
 } from "@/lib/areas/coords";
-import { parseAipVerticalToken } from "@/lib/areas/limits";
+import { extractAipLimitPair } from "@/lib/areas/limits";
 import { isDesignatorOnlyName, normalizeDesignator } from "@/lib/areas/names";
 import type { AreaRecord } from "@/lib/areas/types";
 import {
@@ -63,17 +63,7 @@ function parseCircle(chunk: string): AreaRecord["boundCircle"] {
 }
 
 function parseLimits(chunk: string): [number, number] | undefined {
-  const tokens = [
-    ...chunk.matchAll(
-      /\b(FL\s*\d{1,3}|GND|SFC|UNL|\d{3,5}\s*ft(?:\s*AMSL)?)\b/gi,
-    ),
-  ].map((x) => x[1]);
-  const nums = tokens
-    .map(parseAipVerticalToken)
-    .filter((n): n is number => n != null);
-  if (nums.length >= 2) return [Math.min(...nums), Math.max(...nums)];
-  if (nums.length === 1) return [0, nums[0]];
-  return undefined;
+  return extractAipLimitPair(chunk);
 }
 
 /**

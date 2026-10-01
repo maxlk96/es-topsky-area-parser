@@ -11,7 +11,7 @@ import {
   autoSpacingForRadius,
   parseCompactCoord,
 } from "@/lib/areas/coords";
-import { parseAipVerticalToken } from "@/lib/areas/limits";
+import { extractAipLimitPair } from "@/lib/areas/limits";
 import { isDesignatorOnlyName } from "@/lib/areas/names";
 import type { AreaRecord } from "@/lib/areas/types";
 import { parseValidityWindow } from "@/lib/areas/validity";
@@ -157,25 +157,7 @@ function parseLimitsFromChunk(chunk: string, fallbackText: string): [number, num
     chunk.match(/Vertical limits?([\s\S]{0,400})/i)?.[1] ??
     chunk.match(/Gräns i höjdled([\s\S]{0,400})/i)?.[1] ??
     chunk;
-  const vertTokens = [
-    ...vertChunk.matchAll(
-      /\b(FL\s*\d{1,3}|GND|SFC|UNL|\d{3,5}\s*ft(?:\s*AMSL)?)\b/gi,
-    ),
-  ].map((m) => m[1]);
-  let nums = vertTokens
-    .map(parseAipVerticalToken)
-    .filter((n): n is number => n != null);
-  if (nums.length < 1) {
-    const fb = [
-      ...fallbackText.matchAll(
-        /\b(FL\s*\d{1,3}|GND|SFC|UNL|\d{3,5}\s*ft(?:\s*AMSL)?)\b/gi,
-      ),
-    ].map((m) => parseAipVerticalToken(m[1]));
-    nums = fb.filter((n): n is number => n != null);
-  }
-  if (nums.length >= 2) return [Math.min(...nums), Math.max(...nums)];
-  if (nums.length === 1) return [0, nums[0]];
-  return undefined;
+  return extractAipLimitPair(vertChunk) ?? extractAipLimitPair(fallbackText);
 }
 
 function buildAreaFromSection(

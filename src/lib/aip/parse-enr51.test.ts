@@ -96,6 +96,20 @@ describe("parseEnr51Html", () => {
     expect(r113.exclusionReason).toBe("uas_only");
     expect(r113.coordinates).toEqual([]);
   });
+
+  it("ESR130-style 400 ft SFC lower limit → LIMITS 4", () => {
+    const html = `
+<html><body>
+ESR130 MALMÖ
+553902N 0130553E - 553830N 0130615E - 553722N 0130403E - 553628N 0130524E to point of origin.
+1200 ft AMSL
+400 ft SFC
+Special permission by Swedish Transport Agency.
+</body></html>`;
+    const areas = parseEnr51Html(html, { amdtId: "test-amdt" });
+    const r130 = areas.find((a) => a.id === "ESR130")!;
+    expect(r130.limits).toEqual([4, 12]);
+  });
 });
 
 describe("mergeAipReloadCandidates", () => {
