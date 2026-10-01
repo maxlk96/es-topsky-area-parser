@@ -378,7 +378,7 @@ export function Workspace() {
             layerVisibility={layerVisibility}
           />
           <div className="pointer-events-none absolute bottom-3 left-3 rounded-md bg-white/90 px-2 py-1 text-[11px] text-slate-600 shadow">
-            Bright red = R · Red/gray = D 4F · Light R/D 3 · Yellow = TRA/PCA/CBA · Amber dashed = SUP candidate
+            Red/gray = R/D 4F · Light fill + red border = R/D 3 · Yellow = TRA/PCA/CBA · Amber dashed = SUP candidate
           </div>
         </main>
 

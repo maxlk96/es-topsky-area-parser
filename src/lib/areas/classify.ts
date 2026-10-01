@@ -15,27 +15,16 @@ export function mapStyleFor(area: Pick<AreaRecord, "category" | "areaTypeCode" |
   if (area.category === "OTHER") {
     return { stroke: "#94a3b8", fill: "#94a3b8", fillOpacity: 0.04, lineWidth: 1 };
   }
-
-  const foreign = /^(ED|EK|EP|EE|EF|EN)/i.test(area.shortName);
-
-  // R: brighter red border than D so restricted areas read clearly (incl. AREA:3).
-  if (area.category === "R") {
-    if (area.areaTypeCode === "3") {
-      return { stroke: "#f87171", fill: "#9ca3af", fillOpacity: 0.1, lineWidth: 2.5 };
-    }
-    return {
-      stroke: "#ef4444",
-      fill: "#6b7280",
-      fillOpacity: foreign ? 0.25 : 0.3,
-      lineWidth: 2.5,
-    };
+  // Foreign R/D
+  if (/^(ED|EK|EP|EE|EF|EN)/i.test(area.shortName)) {
+    return { stroke: "#dc2626", fill: "#6b7280", fillOpacity: 0.28, lineWidth: 2.25 };
   }
-
-  // D (and other R/D-like): standard red, AREA:3 stays light fill
+  // AREA:3 — light fill, but keep a clear red outline so they stay readable
   if (area.areaTypeCode === "3") {
-    return { stroke: "#fca5a5", fill: "#d1d5db", fillOpacity: 0.08, lineWidth: 2 };
+    return { stroke: "#dc2626", fill: "#d1d5db", fillOpacity: 0.14, lineWidth: 2.25 };
   }
-  return { stroke: "#dc2626", fill: "#6b7280", fillOpacity: foreign ? 0.25 : 0.28, lineWidth: 2 };
+  // 4F R/D — classic red/gray, slightly stronger than the original MVP defaults
+  return { stroke: "#dc2626", fill: "#6b7280", fillOpacity: 0.34, lineWidth: 2.25 };
 }
 
 export function classifyFromName(
