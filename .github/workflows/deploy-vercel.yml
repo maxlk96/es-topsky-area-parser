@@ -1,25 +1,39 @@
 # Full Next.js deploy (API routes required — GitHub Pages cannot host this app).
-# After the GitHub repo exists:
-#   1. Import the repo in Vercel (or `npx vercel link`)
-#   2. Add repo secrets: VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID
-#   3. Push to main — this workflow deploys production.
+#
+# Setup (one-time, secrets stay in GitHub — never commit them):
+#   1. Import https://github.com/maxlk96/es-topsky-area-parser in Vercel
+#   2. Repo Settings → Secrets and variables → Actions:
+#        VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID
+#   3. Actions → "Deploy (Vercel)" → Run workflow
+#
+# Push-to-main auto-deploy is opt-in via repo variable ENABLE_VERCEL_DEPLOY=true
+# after secrets exist (avoids failed empty runs).
 name: Deploy (Vercel)
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
-  workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    if: ${{ secrets.VERCEL_TOKEN != '' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.ENABLE_VERCEL_DEPLOY == 'true' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
+      - name: Require Vercel secrets
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          test -n "$VERCEL_TOKEN" || { echo "Missing secret VERCEL_TOKEN"; exit 1; }
+          test -n "$VERCEL_ORG_ID" || { echo "Missing secret VERCEL_ORG_ID"; exit 1; }
+          test -n "$VERCEL_PROJECT_ID" || { echo "Missing secret VERCEL_PROJECT_ID"; exit 1; }
       - run: npm ci
       - name: Pull Vercel env
         run: npx vercel pull --yes --environment=production --token="${{ secrets.VERCEL_TOKEN }}"
