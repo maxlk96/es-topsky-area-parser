@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import {
   Map as MapLibreMap,
   NavigationControl,
@@ -8,10 +8,15 @@ import {
   type GeoJSONSource,
 } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-
-setWorkerUrl("/maplibre-gl-worker.mjs");
 import { mapStyleFor } from "@/lib/areas/classify";
+import { closeRing } from "@/lib/areas/coords";
 import type { AreaRecord } from "@/lib/areas/types";
+
+if (typeof window !== "undefined") {
+  // Absolute URL so the module worker can resolve maplibre-gl-shared.mjs
+  // on the same origin (incl. Cloudflare tunnel hosts).
+  setWorkerUrl(`${window.location.origin}/maplibre-gl-worker.mjs`);
+}
 
 type Props = {
   areas: AreaRecord[];
@@ -20,7 +25,9 @@ type Props = {
   showOther: boolean;
 };
 
-function toFeatureCollection(areas: AreaRecord[], role: "base" | "candidate") {
+type Role = "base" | "candidate";
+
+function toFeatureCollection(areas: AreaRecord[], role: Role) {
   return {
     type: "FeatureCollection" as const,
     features: areas
@@ -39,7 +46,6 @@ function toFeatureCollection(areas: AreaRecord[], role: "base" | "candidate") {
             fill: role === "candidate" ? "#f59e0b" : style.fill,
             fillOpacity: role === "candidate" ? 0.12 : style.fillOpacity,
             lineWidth: role === "candidate" ? 2.5 : style.lineWidth,
-            dash: role === "candidate" ? 1 : 0,
           },
           geometry: {
             type: "Polygon" as const,
@@ -50,16 +56,37 @@ function toFeatureCollection(areas: AreaRecord[], role: "base" | "candidate") {
   };
 }
 
+function setSourceData(
+  map: MapLibreMap,
+  sourceId: string,
+  areas: AreaRecord[],
+  role: Role,
+) {
+  const src = map.getSource(sourceId) as GeoJSONSource | undefined;
+  if (!src) return false;
+  src.setData(toFeatureCollection(areas, role));
+  return true;
+}
+
 export function AreaMap({ areas, candidates = [], focusId, showOther }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
+  const sourcesReadyRef = useRef(false);
+  const latestRef = useRef({ visible: [] as AreaRecord[], candidates: [] as AreaRecord[] });
 
-  const visible = areas.filter(
-    (a) => a.mapDefaultVisible || (showOther && a.category === "OTHER"),
+  const visible = useMemo(
+    () =>
+      areas.filter(
+        (a) => a.mapDefaultVisible || (showOther && a.category === "OTHER"),
+      ),
+    [areas, showOther],
   );
+
+  latestRef.current = { visible, candidates };
 
   useEffect(() => {
     if (!ref.current || mapRef.current) return;
+
     const map = new MapLibreMap({
       container: ref.current,
       style: {
@@ -84,55 +111,72 @@ export function AreaMap({ areas, candidates = [], focusId, showOther }: Props) {
       zoom: 4.2,
     });
     map.addControl(new NavigationControl(), "top-left");
+
+    const applyLatest = () => {
+      const { visible: v, candidates: c } = latestRef.current;
+      setSourceData(map, "areas", v, "base");
+      setSourceData(map, "candidates", c, "candidate");
+    };
+
     map.on("load", () => {
-      map.addSource("areas", {
-        type: "geojson",
-        data: toFeatureCollection([], "base"),
-      });
-      map.addSource("candidates", {
-        type: "geojson",
-        data: toFeatureCollection([], "candidate"),
-      });
-      map.addLayer({
-        id: "areas-fill",
-        type: "fill",
-        source: "areas",
-        paint: {
-          "fill-color": ["get", "fill"],
-          "fill-opacity": ["get", "fillOpacity"],
-        },
-      });
-      map.addLayer({
-        id: "areas-line",
-        type: "line",
-        source: "areas",
-        paint: {
-          "line-color": ["get", "stroke"],
-          "line-width": ["get", "lineWidth"],
-        },
-      });
-      map.addLayer({
-        id: "cand-fill",
-        type: "fill",
-        source: "candidates",
-        paint: {
-          "fill-color": "#f59e0b",
-          "fill-opacity": 0.12,
-        },
-      });
-      map.addLayer({
-        id: "cand-line",
-        type: "line",
-        source: "candidates",
-        paint: {
-          "line-color": "#f59e0b",
-          "line-width": 2.5,
-          "line-dasharray": [2, 1],
-        },
-      });
+      if (!map.getSource("areas")) {
+        map.addSource("areas", {
+          type: "geojson",
+          data: toFeatureCollection([], "base"),
+        });
+        map.addSource("candidates", {
+          type: "geojson",
+          data: toFeatureCollection([], "candidate"),
+        });
+        map.addLayer({
+          id: "areas-fill",
+          type: "fill",
+          source: "areas",
+          paint: {
+            "fill-color": ["get", "fill"],
+            "fill-opacity": ["get", "fillOpacity"],
+          },
+        });
+        map.addLayer({
+          id: "areas-line",
+          type: "line",
+          source: "areas",
+          paint: {
+            "line-color": ["get", "stroke"],
+            "line-width": ["get", "lineWidth"],
+          },
+        });
+        map.addLayer({
+          id: "cand-fill",
+          type: "fill",
+          source: "candidates",
+          paint: {
+            "fill-color": "#f59e0b",
+            "fill-opacity": 0.12,
+          },
+        });
+        map.addLayer({
+          id: "cand-line",
+          type: "line",
+          source: "candidates",
+          paint: {
+            "line-color": "#f59e0b",
+            "line-width": 2.5,
+            "line-dasharray": [2, 1],
+          },
+        });
+      }
+      sourcesReadyRef.current = true;
+      applyLatest();
     });
+
+    map.on("error", (e) => {
+      console.error("[AreaMap]", e.error?.message ?? e);
+    });
+
     mapRef.current = map;
     return () => {
+      sourcesReadyRef.current = false;
       map.remove();
       mapRef.current = null;
     };
@@ -140,23 +184,9 @@ export function AreaMap({ areas, candidates = [], focusId, showOther }: Props) {
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !map.isStyleLoaded()) {
-      map?.once("load", () => {
-        (map.getSource("areas") as GeoJSONSource | undefined)?.setData(
-          toFeatureCollection(visible, "base"),
-        );
-        (map.getSource("candidates") as GeoJSONSource | undefined)?.setData(
-          toFeatureCollection(candidates, "candidate"),
-        );
-      });
-      return;
-    }
-    (map.getSource("areas") as GeoJSONSource | undefined)?.setData(
-      toFeatureCollection(visible, "base"),
-    );
-    (map.getSource("candidates") as GeoJSONSource | undefined)?.setData(
-      toFeatureCollection(candidates, "candidate"),
-    );
+    if (!map || !sourcesReadyRef.current) return;
+    setSourceData(map, "areas", visible, "base");
+    setSourceData(map, "candidates", candidates, "candidate");
   }, [visible, candidates]);
 
   useEffect(() => {
