@@ -1,3 +1,4 @@
+import { supNumberKey } from "@/lib/aip/sup-catalogue";
 import {
   shouldEmitNoAupActivationComment,
   stripTempoGroupHeaders,
@@ -191,13 +192,16 @@ export function applyAcceptedAreaBlocks(
         pcaMissing
           .map((a) => formatAreaBlock(a, { includeSupHeader: false }).trimEnd())
           .join("\n\n") + "\n\n";
-      const pcaMark = text.indexOf("MILITARY EXERCISE AREAS (PCA)");
-      if (pcaMark >= 0) {
-        // After the PCA section banner / following //// rule lines.
-        const afterBanner = text.indexOf("\n//", pcaMark + 1);
-        const insertAt =
-          afterBanner >= 0 ? text.indexOf("\n", afterBanner + 1) + 1 : pcaMark;
-        text = text.slice(0, insertAt) + insertBlocks + text.slice(insertAt);
+      const pcaBanner = findSectionBannerSpan(
+        text,
+        "MILITARY EXERCISE AREAS (PCA)",
+      );
+      if (pcaBanner) {
+        // After the full PCA banner — never mid-banner.
+        text =
+          text.slice(0, pcaBanner.end) +
+          insertBlocks +
+          text.slice(pcaBanner.end);
       } else {
         text = text.trimEnd() + "\n\n" + insertBlocks;
       }
@@ -208,10 +212,16 @@ export function applyAcceptedAreaBlocks(
         otherMissing
           .map((a) => formatAreaBlock(a, { includeSupHeader: false }).trimEnd())
           .join("\n\n") + "\n\n";
-      const tempoMark = text.indexOf("START OF TEMPO R AND D AREAS");
-      if (tempoMark >= 0) {
-        const lineStart = text.lastIndexOf("\n", tempoMark) + 1;
-        text = text.slice(0, lineStart) + insertBlocks + text.slice(lineStart);
+      const tempoBanner = findSectionBannerSpan(
+        text,
+        "START OF TEMPO R AND D AREAS",
+      );
+      if (tempoBanner) {
+        // Before the full START banner — never split //// / // / START.
+        text =
+          text.slice(0, tempoBanner.start) +
+          insertBlocks +
+          text.slice(tempoBanner.start);
       } else {
         text = text.trimEnd() + "\n\n" + insertBlocks;
       }
@@ -346,24 +356,39 @@ export function formatAreaBlock(
   return lines.join("\n");
 }
 
+/** Compare SUP numbers newest-first (year, then serial). 2-digit years → 20xx. */
+function compareSupNumberDesc(a: string, b: string): number {
+  const norm = (s: string): [number, number] => {
+    const [y, n] = supNumberKey(s);
+    return [y > 0 && y < 100 ? 2000 + y : y, n];
+  };
+  const [ay, an] = norm(a);
+  const [by, bn] = norm(b);
+  if (by !== ay) return by - ay;
+  return bn - an;
+}
+
 /**
- * Emit tempo blocks grouped by SUP. One `// NNN/YY - Valid to` (+ optional
- * `// NO AUP ACTIVATION`) heads each group. Preserved topsky rawBlocks keep
- * geometry; accepted/toggled areas are fully rewritten.
+ * Emit tempo blocks grouped by SUP, ordered by SUP number (newest first).
+ * One `// NNN/YY - Valid to` (+ optional `// NO AUP ACTIVATION`) heads each group.
  */
 export function formatTempoAreaBlocks(areas: AreaRecord[]): string {
   const groups = new Map<string, AreaRecord[]>();
-  const order: string[] = [];
   for (const a of areas) {
     const key = a.provenance.supNumber
       ? `sup:${formatSupNumberShort(a.provenance.supNumber)}`
       : `id:${a.id.toUpperCase()}`;
-    if (!groups.has(key)) {
-      groups.set(key, []);
-      order.push(key);
-    }
+    if (!groups.has(key)) groups.set(key, []);
     groups.get(key)!.push(a);
   }
+  const order = [...groups.keys()].sort((ka, kb) => {
+    const sa = ka.startsWith("sup:") ? ka.slice(4) : "";
+    const sb = kb.startsWith("sup:") ? kb.slice(4) : "";
+    if (sa && sb) return compareSupNumberDesc(sa, sb);
+    if (sa) return -1;
+    if (sb) return 1;
+    return ka.localeCompare(kb);
+  });
   const chunks: string[] = [];
   for (const key of order) {
     const group = groups.get(key)!;
@@ -493,8 +518,128 @@ export function sanitizeExportedTopSkyText(text: string): string {
   return collapsed.join("\n").replace(/\n*$/, "\n");
 }
 
-const TEMPO_START = "//      START OF TEMPO R AND D AREAS";
-const TEMPO_END = "//      END OF TEMPO R AND D AREAS";
+export const TEMPO_START_BANNER = `/////////////////////////////////////////////////////////////////////
+//
+//      START OF TEMPO R AND D AREAS
+//
+/////////////////////////////////////////////////////////////////////`;
+
+export const TEMPO_END_BANNER = `/////////////////////////////////////////////////////////////////////
+//
+//      END OF TEMPO R AND D AREAS
+//
+/////////////////////////////////////////////////////////////////////`;
+
+/**
+ * True for lines that form ESAA section banners (//// rules, blank `//`,
+ * indented titles like `//      START OF TEMPO…`). Not area/SUP body comments.
+ */
+export function isSectionBannerLine(line: string): boolean {
+  const t = line.replace(/\s+$/g, "");
+  if (!t.startsWith("//")) return false;
+  if (/^\/\/\s*ES[A-Z0-9]/i.test(t)) return false;
+  if (/^\/\/\s*A\d/i.test(t)) return false;
+  if (/^\/\/\s*\d+\s*\/\s*\d+/i.test(t)) return false;
+  if (/^\/\/\s*EXCLUDED\b/i.test(t)) return false;
+  if (/^\/\/\s*NO AUP\b/i.test(t)) return false;
+  if (/^\/\/\s*NO LABEL\b/i.test(t)) return false;
+  if (/^\/\/\s*LABEL:/i.test(t)) return false;
+  return (
+    /^\/{10,}/.test(t) ||
+    /^\/\/\s*$/.test(t) ||
+    /^\/\/\s{2,}\S/.test(t) ||
+    /^\/\/\s+(START|END)\s+OF\b/i.test(t) ||
+    /^\/\/\s+MILITARY EXERCISE\b/i.test(t)
+  );
+}
+
+/**
+ * Span of the full contiguous comment banner containing `markerSubstring`
+ * (e.g. START OF TEMPO…), including //// rules above and below.
+ * `end` is the index after the banner’s last newline (or EOF).
+ */
+export function findSectionBannerSpan(
+  text: string,
+  markerSubstring: string,
+): { start: number; end: number } | null {
+  const normalized = text.replace(/\r\n/g, "\n");
+  const markerIdx = normalized.indexOf(markerSubstring);
+  if (markerIdx < 0) return null;
+
+  const lineStarts: number[] = [0];
+  for (let i = 0; i < normalized.length; i++) {
+    if (normalized[i] === "\n") lineStarts.push(i + 1);
+  }
+  let markerLine = 0;
+  for (let i = 0; i < lineStarts.length; i++) {
+    if (lineStarts[i]! <= markerIdx) markerLine = i;
+    else break;
+  }
+
+  const lines = normalized.split("\n");
+  let lo = markerLine;
+  let hi = markerLine;
+  while (lo > 0 && isSectionBannerLine(lines[lo - 1]!)) lo -= 1;
+  while (hi + 1 < lines.length && isSectionBannerLine(lines[hi + 1]!)) hi += 1;
+
+  const start = lineStarts[lo]!;
+  const end =
+    hi + 1 < lineStarts.length ? lineStarts[hi + 1]! : normalized.length;
+  return { start, end };
+}
+
+function supKeyFromExcludedStub(stub: string): string | undefined {
+  return stub.match(/\/\/\s*(\d+\/\d+)\s*-/i)?.[1];
+}
+
+/**
+ * Build tempo body: active areas + EXCLUDED stubs interleaved by SUP number
+ * (newest first) — not bunched included-then-excluded.
+ */
+export function formatTempoSectionBody(
+  activeTempo: AreaRecord[],
+  excludedBlocks: { supKey: string; text: string }[],
+): string {
+  type Entry = { sortKey: string; text: string };
+  const entries: Entry[] = [];
+
+  // Active groups → one entry each (formatTempoAreaBlocks already sorts).
+  const activeText = formatTempoAreaBlocks(activeTempo);
+  if (activeText.trim()) {
+    // Split back into per-SUP chunks on Valid-to headers for interleave.
+    const parts = activeText.split(/(?=^\/\/\s*\d+\/\d+\s*-\s*Valid to)/m);
+    for (const part of parts) {
+      const trimmed = part.trimEnd();
+      if (!trimmed) continue;
+      const m = trimmed.match(/^\/\/\s*(\d+\/\d+)\s*-/i);
+      entries.push({
+        sortKey: m?.[1] || `~${entries.length}`,
+        text: trimmed + "\n",
+      });
+    }
+  }
+
+  for (const ex of excludedBlocks) {
+    entries.push({
+      sortKey: ex.supKey || `~ex${entries.length}`,
+      text: ex.text.trimEnd() + "\n",
+    });
+  }
+
+  entries.sort((a, b) => {
+    const aNum = /^\d+\//.test(a.sortKey);
+    const bNum = /^\d+\//.test(b.sortKey);
+    if (aNum && bNum) return compareSupNumberDesc(a.sortKey, b.sortKey);
+    if (aNum) return -1;
+    if (bNum) return 1;
+    return a.sortKey.localeCompare(b.sortKey);
+  });
+
+  return entries
+    .map((e) => e.text)
+    .filter((t) => t.trim())
+    .join("\n");
+}
 
 /** Surgical replace of tempo section; remove expired; insert accepted new blocks. */
 export function mergeTempoSection(
@@ -504,8 +649,11 @@ export function mergeTempoSection(
 ): string {
   const now = opts?.now ?? new Date();
   const text = originalText.replace(/\r\n/g, "\n");
-  const startIdx = text.indexOf("START OF TEMPO R AND D AREAS");
-  const endIdx = text.indexOf("END OF TEMPO R AND D AREAS");
+  const startBanner = findSectionBannerSpan(
+    text,
+    "START OF TEMPO R AND D AREAS",
+  );
+  const endBanner = findSectionBannerSpan(text, "END OF TEMPO R AND D AREAS");
 
   const tempoAreas = workingAreas.filter(
     (a) =>
@@ -522,12 +670,9 @@ export function mergeTempoSection(
       !isExpired(a, now) &&
       a.exclusionReason !== "uas_only",
   );
-  const activeTempo = (
-    inTempo.length ? inTempo : tempoAreas.filter((a) => !isExpired(a, now) && a.mapDefaultVisible)
-  );
-
-  // One pass: SUP Valid-to / NO AUP headers + preserved or rewritten bodies.
-  const tempoBlocks = formatTempoAreaBlocks(activeTempo);
+  const activeTempo = inTempo.length
+    ? inTempo
+    : tempoAreas.filter((a) => !isExpired(a, now) && a.mapDefaultVisible);
 
   // EXCLUDED stubs: new from scan/diffs + untouched stubs from original tempo.
   const excludedFromWork = [
@@ -536,22 +681,22 @@ export function mergeTempoSection(
   ];
 
   let originalTempo = "";
-  if (startIdx >= 0 && endIdx > startIdx) {
-    originalTempo = text.slice(startIdx, endIdx);
+  if (startBanner && endBanner && endBanner.start > startBanner.end) {
+    originalTempo = text.slice(startBanner.end, endBanner.start);
+  } else if (startBanner && endBanner) {
+    originalTempo = text.slice(startBanner.start, endBanner.end);
   }
+
   const preservedExcluded = extractExcludedStubsFromTempo(originalTempo).filter(
     (stub) => {
-      const m = stub.match(/\/\/\s*(\d+\/\d+)\s*-/i);
-      if (!m) return true;
-      const key = m[1];
-      // Replaced by a newly emitted excluded stub for the same SUP.
+      const key = supKeyFromExcludedStub(stub);
+      if (!key) return true;
       const hasNew = excludedFromWork.some(
         (a) =>
           a.provenance.supNumber &&
           formatSupNumberShort(a.provenance.supNumber) === key,
       );
       if (hasNew) return false;
-      // SUP now has active areas — drop the old EXCLUDED stub.
       const becameActive = activeTempo.some(
         (a) =>
           a.provenance.supNumber &&
@@ -561,36 +706,40 @@ export function mergeTempoSection(
     },
   );
 
-  // Dedupe new excluded stubs by SUP short number
   const seenEx = new Set<string>();
-  const newExcludedBlocks: string[] = [];
+  const excludedBlocks: { supKey: string; text: string }[] = [];
   for (const a of excludedFromWork) {
     const key = a.provenance.supNumber
       ? formatSupNumberShort(a.provenance.supNumber)
       : a.id;
     if (seenEx.has(key)) continue;
     seenEx.add(key);
-    newExcludedBlocks.push(formatExcludedSupStub(a).trimEnd() + "\n");
+    excludedBlocks.push({
+      supKey: key,
+      text: formatExcludedSupStub(a).trimEnd() + "\n",
+    });
+  }
+  for (const stub of preservedExcluded) {
+    const key = supKeyFromExcludedStub(stub) || stub.slice(0, 40);
+    if (seenEx.has(key)) continue;
+    seenEx.add(key);
+    excludedBlocks.push({
+      supKey: key,
+      text: stub.trimEnd() + "\n",
+    });
   }
 
-  const blocks = [
-    tempoBlocks,
-    ...newExcludedBlocks,
-    ...preservedExcluded.map((s) => s.trimEnd() + "\n"),
-  ]
-    .filter((b) => b && b.trim())
-    .join("\n");
+  const blocks = formatTempoSectionBody(activeTempo, excludedBlocks);
 
-  if (startIdx < 0 || endIdx < 0 || endIdx < startIdx) {
+  if (!startBanner || !endBanner || endBanner.start < startBanner.end) {
     return sanitizeExportedTopSkyText(
-      `${text.trimEnd()}\n\n${TEMPO_START}\n${blocks}\n${TEMPO_END}\n`,
+      `${text.trimEnd()}\n\n${TEMPO_START_BANNER}\n\n${blocks}\n${TEMPO_END_BANNER}\n`,
     );
   }
 
-  const afterStartLine = text.indexOf("\n", startIdx);
-  const endLineStart = text.lastIndexOf("\n", endIdx) + 1;
-  const head = text.slice(0, afterStartLine + 1);
-  const tail = text.slice(endLineStart);
+  // Keep each banner as one contiguous block; only rewrite the interior.
+  const head = text.slice(0, startBanner.end);
+  const tail = text.slice(endBanner.start);
   return sanitizeExportedTopSkyText(`${head}\n${blocks}\n${tail}`);
 }
 

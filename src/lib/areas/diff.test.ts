@@ -275,7 +275,7 @@ describe("mergeDiffItems / mergeCandidateAreas", () => {
         status: "new",
         candidate: stub({
           id: "ESR791",
-          provenance: { source: "sup" },
+          provenance: { source: "sup", supNumber: "185/2026" },
         }),
         notes: [],
       },
@@ -292,6 +292,42 @@ describe("mergeDiffItems / mergeCandidateAreas", () => {
       "ESR3",
       "ESR791",
       "A1",
+    ]);
+  });
+
+  it("orders SUP verify rows by SUP number, not excluded-after-new", () => {
+    const items = sortDiffItems([
+      {
+        status: "new",
+        candidate: stub({
+          id: "ESR791",
+          provenance: { source: "sup", supNumber: "185/2026" },
+        }),
+        notes: [],
+      },
+      {
+        status: "excluded",
+        candidate: stub({
+          id: "ESD865",
+          provenance: { source: "sup", supNumber: "191/2026" },
+          exclusionReason: "uas_only",
+        }),
+        notes: [],
+      },
+      {
+        status: "excluded",
+        candidate: stub({
+          id: "ESD821",
+          provenance: { source: "sup", supNumber: "111/2026" },
+          exclusionReason: "uas_only",
+        }),
+        notes: [],
+      },
+    ]);
+    expect(items.map((d) => d.candidate.provenance.supNumber)).toEqual([
+      "191/2026",
+      "185/2026",
+      "111/2026",
     ]);
   });
 

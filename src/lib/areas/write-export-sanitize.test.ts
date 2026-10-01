@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { toTopSkyCoord } from "./coords";
 import {
   applyAcceptedAreaBlocks,
+  findSectionBannerSpan,
   formatAreaBlock,
   formatExcludedSupStub,
   formatLabelLine,
@@ -11,6 +12,8 @@ import {
   mergeTempoSection,
   needsFullBlockRewrite,
   sanitizeExportedTopSkyText,
+  TEMPO_END_BANNER,
+  TEMPO_START_BANNER,
 } from "./write-topsky";
 import type { AreaRecord } from "./types";
 
@@ -325,5 +328,80 @@ N059.24.37.000 E020.15.55.000
     expect(out).toContain("NYNÄSHAMN");
     expect(out).toMatch(/LABEL:N066\./);
     expect(out).toMatch(/^N058\./m);
+  });
+
+  it("findSectionBannerSpan keeps //// START //// as one contiguous block", () => {
+    const file = `//note
+
+${TEMPO_START_BANNER}
+
+//ESD1 X
+AREA:4F:  D1
+
+${TEMPO_END_BANNER}
+`;
+    const start = findSectionBannerSpan(file, "START OF TEMPO R AND D AREAS")!;
+    const end = findSectionBannerSpan(file, "END OF TEMPO R AND D AREAS")!;
+    expect(file.slice(start.start, start.end).trim()).toBe(TEMPO_START_BANNER);
+    expect(file.slice(end.start, end.end).trim()).toBe(TEMPO_END_BANNER);
+  });
+
+  it("mergeTempoSection preserves full START/END banners and orders EXCLUDED by SUP number", () => {
+    const file = `//ESR24 DROTTNINGHOLM
+AREA:3:  R24
+
+${TEMPO_START_BANNER}
+
+// 100/26 - Valid to 31 AUG 2026
+// EXCLUDED. ONLY UAS (BVLOS)
+
+${TEMPO_END_BANNER}
+`;
+    const accepted = tempoArea({
+      id: "ESR797",
+      shortName: "R797",
+      name: "MOHOLM",
+      rawBlock: "",
+      provenance: {
+        source: "sup",
+        supNumber: "182/2025",
+        validTo: "31 AUG 2026",
+      },
+    });
+    const excluded = tempoArea({
+      id: "ESD865",
+      shortName: "D865",
+      name: "UAS",
+      exclusionReason: "uas_only",
+      coordinates: [],
+      rawBlock: "",
+      provenance: {
+        source: "sup",
+        supNumber: "191/2026",
+        validTo: "31 DEC 2026",
+      },
+    });
+    const out = mergeTempoSection(file, [accepted, excluded], {
+      now: new Date("2026-06-01T12:00:00Z"),
+    });
+    expect(out).toContain(TEMPO_START_BANNER);
+    expect(out).toContain(TEMPO_END_BANNER);
+    // Banners stay contiguous (not split by content lines).
+    expect(out).toMatch(
+      /\/{20,}\n\/\/\n\/\/\s+START OF TEMPO R AND D AREAS\n\/\/\n\/{20,}/,
+    );
+    expect(out).toMatch(
+      /\/{20,}\n\/\/\n\/\/\s+END OF TEMPO R AND D AREAS\n\/\/\n\/{20,}/,
+    );
+    // Newest SUP number first (not included-then-excluded):
+    // 191/2026 excl → 100/2026 excl → 182/2025 active.
+    const i191 = out.indexOf("// 191/26");
+    const i182 = out.indexOf("// 182/25");
+    const i100 = out.indexOf("// 100/26");
+    expect(i191).toBeGreaterThan(-1);
+    expect(i182).toBeGreaterThan(-1);
+    expect(i100).toBeGreaterThan(-1);
+    expect(i191).toBeLessThan(i100);
+    expect(i100).toBeLessThan(i182);
   });
 });

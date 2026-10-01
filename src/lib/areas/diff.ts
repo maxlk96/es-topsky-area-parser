@@ -2,11 +2,19 @@ import {
   FIR_BORDER_EXCLUSION,
   FIR_BORDER_NOTE,
 } from "@/lib/aip/fir-border";
+import { supNumberKey } from "@/lib/aip/sup-catalogue";
 import { activationLabel } from "./activation";
 import { isUasOnlyText } from "./classify";
 import { normalizeDesignator } from "./names";
 import type { AreaRecord, DiffItem } from "./types";
 import { isExpired, isUpcoming } from "./validity";
+
+/** Newest-first SUP sort key; treats 2-digit years as 20xx. */
+function supSortKey(number: string | undefined): [number, number] {
+  const [y, n] = supNumberKey(number || "");
+  const year = y > 0 && y < 100 ? 2000 + y : y;
+  return [year, n];
+}
 
 /** ~100 m — AIP compact seconds vs TopSky sub-second noise. */
 const COORD_TOLERANCE_NM = 0.055;
@@ -163,7 +171,10 @@ export function diffSourceGroupLabel(key: string): string {
   }
 }
 
-/** Group by source, then actionable status first within each group. */
+/**
+ * Group by source. Within AIP SUP: sort by SUP number (newest first) —
+ * not primarily by included vs excluded status. Other sources: status then id.
+ */
 export function sortDiffItems(items: DiffItem[]): DiffItem[] {
   return [...items].sort((a, b) => {
     const sa =
@@ -171,6 +182,18 @@ export function sortDiffItems(items: DiffItem[]): DiffItem[] {
     const sb =
       DIFF_SOURCE_ORDER[b.candidate.provenance?.source || ""] ?? 9;
     if (sa !== sb) return sa - sb;
+
+    const aSup = a.candidate.provenance?.supNumber;
+    const bSup = b.candidate.provenance?.supNumber;
+    if (aSup || bSup) {
+      const [ay, an] = supSortKey(aSup);
+      const [by, bn] = supSortKey(bSup);
+      if (by !== ay) return by - ay;
+      if (bn !== an) return bn - an;
+      // Same SUP: id only — don't bunch excluded after new.
+      return a.candidate.id.localeCompare(b.candidate.id);
+    }
+
     const oa = DIFF_STATUS_ORDER[a.status] ?? 9;
     const ob = DIFF_STATUS_ORDER[b.status] ?? 9;
     if (oa !== ob) return oa - ob;

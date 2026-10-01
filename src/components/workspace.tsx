@@ -31,6 +31,7 @@ import {
   redensifyBoundCircle,
   redensifyBoundCircleAuto,
 } from "@/lib/areas/coords";
+import { supNumberKey } from "@/lib/aip/sup-catalogue";
 import {
   diffCandidates,
   diffSourceGroupKey,
@@ -974,7 +975,22 @@ export function Workspace() {
           <Separator />
           <ScrollArea className="min-h-0 flex-1">
             <div className="space-y-2 pr-2">
-              {sups.filter((s) => s.likelyArea).map((s) => (
+              {[...sups]
+                .filter((s) => s.likelyArea)
+                .sort((a, b) => {
+                  // SUP number only — not selected/excluded vs included.
+                  const [ay, an] = (() => {
+                    const [y, n] = supNumberKey(a.number);
+                    return [y > 0 && y < 100 ? 2000 + y : y, n] as const;
+                  })();
+                  const [by, bn] = (() => {
+                    const [y, n] = supNumberKey(b.number);
+                    return [y > 0 && y < 100 ? 2000 + y : y, n] as const;
+                  })();
+                  if (by !== ay) return by - ay;
+                  return bn - an;
+                })
+                .map((s) => (
                 <div
                   key={s.href}
                   className={`flex items-start gap-2 rounded-md border border-transparent px-1 py-1 hover:border-slate-200 hover:bg-white ${
