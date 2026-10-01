@@ -1,6 +1,7 @@
 import centroid from "@turf/centroid";
 import { polygon } from "@turf/helpers";
 import {
+  areaOmitsLabel,
   inferAreaTypeFromRemarks,
   isUasOnlyText,
   shortFromDesignator,
@@ -172,23 +173,26 @@ export function parseEnr51Html(
 
     let label: AreaRecord["label"];
     // Full circles: LABEL at BOUND:C centre (not densified-ring centroid).
-    if (boundCircle) {
-      label = {
-        lat: boundCircle.lat,
-        lon: boundCircle.lon,
-        text: nameUp,
-      };
-    } else if (coordinates.length >= 3) {
-      try {
-        const poly = polygon([coordinates]);
-        const c = centroid(poly);
+    // ESR94 (and other omit-label ids) stay unlabeled — export writes // NO LABEL.
+    if (!areaOmitsLabel({ id, shortName })) {
+      if (boundCircle) {
         label = {
-          lon: c.geometry.coordinates[0],
-          lat: c.geometry.coordinates[1],
+          lat: boundCircle.lat,
+          lon: boundCircle.lon,
           text: nameUp,
         };
-      } catch {
-        /* ignore */
+      } else if (coordinates.length >= 3) {
+        try {
+          const poly = polygon([coordinates]);
+          const c = centroid(poly);
+          label = {
+            lon: c.geometry.coordinates[0],
+            lat: c.geometry.coordinates[1],
+            text: nameUp,
+          };
+        } catch {
+          /* ignore */
+        }
       }
     }
 

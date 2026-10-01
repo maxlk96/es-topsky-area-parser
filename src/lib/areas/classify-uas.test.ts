@@ -1,5 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { isUasOnlyText, mentionsUasActivity } from "./classify";
+import {
+  areaOmitsLabel,
+  isUasOnlyText,
+  mentionsUasActivity,
+} from "./classify";
+
+describe("areaOmitsLabel", () => {
+  it("flags ESR94 / R94 only", () => {
+    expect(areaOmitsLabel({ id: "ESR94", shortName: "R94" })).toBe(true);
+    expect(areaOmitsLabel({ id: "esr94", shortName: "r94" })).toBe(true);
+    expect(areaOmitsLabel({ id: "ESR117", shortName: "R117" })).toBe(false);
+  });
+});
 
 describe("mentionsUasActivity", () => {
   it("flags body text like SUP 101/2026 (UAS + BVLOS, clean subject)", () => {

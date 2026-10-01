@@ -66,6 +66,21 @@ export function shortFromDesignator(id: string): string {
   return u;
 }
 
+/**
+ * Areas that must stay unlabeled in TopSky (no active LABEL line).
+ * ESR94 Sörentorp — same ops policy as other Stockholm urban circles that
+ * keep only a commented `//LABEL:` in the live ESAA file.
+ */
+const OMIT_LABEL_IDS = new Set(["ESR94", "R94"]);
+
+export function areaOmitsLabel(
+  area: Pick<{ id: string; shortName?: string }, "id" | "shortName">,
+): boolean {
+  const id = area.id.trim().toUpperCase();
+  const short = (area.shortName || "").trim().toUpperCase();
+  return OMIT_LABEL_IDS.has(id) || OMIT_LABEL_IDS.has(short);
+}
+
 /** Any UAS/UAV/BVLOS-style mention (subject or body) — skip auto-select. */
 export function mentionsUasActivity(text: string): boolean {
   return (

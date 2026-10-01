@@ -145,6 +145,22 @@ Oil refinery.
     expect(r117.label?.lat).toBeCloseTo(r117.boundCircle!.lat, 5);
     expect(r117.label?.lon).toBeCloseTo(r117.boundCircle!.lon, 5);
   });
+
+  it("ESR94 Sörentorp is parsed without an active LABEL", () => {
+    const html = `
+<html><body>
+ESR94 SÖRENTORP
+A circle with radius 0.5 NM centred on 592348N 0175929E.
+1500 ft AMSL
+GND
+Särskilda tillstånd från Transportstyrelsen krävs förutom för svenska luftfartyg.
+</body></html>`;
+    const areas = parseEnr51Html(html, { amdtId: "test-amdt" });
+    const r94 = areas.find((a) => a.id === "ESR94")!;
+    expect(r94).toBeTruthy();
+    expect(r94.boundCircle).toBeTruthy();
+    expect(r94.label).toBeUndefined();
+  });
 });
 
 describe("mergeAipReloadCandidates", () => {

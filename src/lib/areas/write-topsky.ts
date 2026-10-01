@@ -1,3 +1,4 @@
+import { areaOmitsLabel } from "./classify";
 import { closeRing, parseTopSkyCoordPair, toTopSkyCoord } from "./coords";
 import { formatLimits } from "./limits";
 import type { AreaLabel, AreaRecord } from "./types";
@@ -129,6 +130,14 @@ function escapeRegExp(s: string): string {
 export function needsFullBlockRewrite(area: AreaRecord): boolean {
   if (area.exclusionReason) return false;
   if (!(area.category === "R" || area.category === "D")) return false;
+  // Omit-label areas with an active LABEL still in rawBlock must be rewritten.
+  if (
+    areaOmitsLabel(area) &&
+    area.rawBlock &&
+    /(^|\n)(?!\/\/)LABEL:/im.test(area.rawBlock)
+  ) {
+    return true;
+  }
   // Untouched baseline: keep rawBlock as-is (label/name patched separately).
   if (area.provenance.source === "topsky" && area.rawBlock) return false;
   // Accepted ENR/SUP, regenerated circles, or any empty-rawBlock working copy.
@@ -259,8 +268,23 @@ export function formatAreaBlock(
     lines.push("ACTIVE:1");
   }
   // MANUAL / NONE → no ACTIVE line
-  // Only emit LABEL when the area already has one (or newly accepted SUP with label).
-  if (area.label) {
+  if (areaOmitsLabel(area)) {
+    // Explicit marker so ops don't re-add a LABEL on these blocks (e.g. ESR94).
+    lines.push("// NO LABEL");
+    // ESAA style: keep a commented LABEL at circle centre for reference only.
+    const ref =
+      area.boundCircle != null
+        ? {
+            lat: area.boundCircle.lat,
+            lon: area.boundCircle.lon,
+            text: labelText,
+          }
+        : area.label
+          ? { ...area.label, text: labelText }
+          : null;
+    if (ref) lines.push(`//${formatLabelLine(ref)}`);
+  } else if (area.label) {
+    // Only emit LABEL when the area already has one (or newly accepted SUP with label).
     lines.push(formatLabelLine({ ...area.label, text: labelText }));
   }
   if (area.limits) {

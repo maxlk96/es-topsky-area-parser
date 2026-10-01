@@ -207,6 +207,38 @@ N059.20.26.000 E017.52.30.000
     expect(out).toContain("// EXCLUDED. ONLY UAS (BVLOS)");
   });
 
+  it("ESR94 emits // NO LABEL and never an active LABEL", () => {
+    const r94: AreaRecord = {
+      id: "ESR94",
+      shortName: "R94",
+      name: "SÖRENTORP",
+      category: "R",
+      areaTypeCode: "3",
+      coordinates: [
+        [17.9914, 59.3967],
+        [17.995, 59.3967],
+        [17.995, 59.4],
+        [17.9914, 59.3967],
+      ],
+      limits: [0, 15],
+      activation: { type: "ALWAYS" },
+      directives: [],
+      // Even if a centre label sneaks in, export must suppress it.
+      label: { lat: 59.3966667, lon: 17.9913889, text: "SÖRENTORP" },
+      mapDefaultVisible: true,
+      noaiw: false,
+      boundCircle: { lat: 59.3966667, lon: 17.9913889, radiusNm: 0.5 },
+      provenance: { source: "enr51" },
+      rawBlock: "",
+      section: "other",
+    };
+    const block = formatAreaBlock(r94, { includeSupHeader: false });
+    expect(block).toContain("// NO LABEL");
+    expect(block).toMatch(/\/\/LABEL:N059\./);
+    expect(block).not.toMatch(/(^|\n)LABEL:/);
+    expect(needsFullBlockRewrite(r94)).toBe(true);
+  });
+
   it("sanitize rewrites legacy seconds=60, pads Nddd, cleans LABEL junk", () => {
     const raw = [
       "LABEL:N66.55.55.000:E017.55.60.000:TJÅMOTIS",

@@ -1,4 +1,5 @@
 import {
+  areaOmitsLabel,
   classifyFromName,
   designatorFromShort,
 } from "./classify";
@@ -105,6 +106,21 @@ export function parseTopSkyText(text: string, encoding = "latin1"): ParseResult 
       rawBlock = patchNameInBlock(rawBlock, id, resolved.name, label);
     }
 
+    // ESR94 etc.: never keep an active LABEL (comment it out + // NO LABEL marker).
+    let exportLabel = label;
+    if (areaOmitsLabel({ id, shortName })) {
+      exportLabel = undefined;
+      if (/(^|\n)(?!\/\/)LABEL:/im.test(rawBlock)) {
+        rawBlock = rawBlock.replace(/(^|\n)(?!\/\/)LABEL:/gim, "$1//LABEL:");
+      }
+      if (!/\/\/\s*NO LABEL\b/i.test(rawBlock)) {
+        rawBlock = rawBlock.replace(
+          /(^AREA:[^\n]*\n)/im,
+          "$1// NO LABEL\n",
+        );
+      }
+    }
+
     // Tempo SUP header: `// 182/25 - Valid to 31 AUG 2026` (kept in rawBlock; also
     // on provenance so Accept/rewrite can re-emit the same convention).
     let supNumber: string | undefined;
@@ -130,7 +146,7 @@ export function parseTopSkyText(text: string, encoding = "latin1"): ParseResult 
       limits: cur.limits,
       activation,
       directives: cur.directives,
-      label,
+      label: exportLabel,
       mapDefaultVisible,
       noaiw: cur.noaiw,
       boundCircle: cur.boundCircle,

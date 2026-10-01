@@ -32,7 +32,7 @@ import {
   redensifyBoundCircleAuto,
 } from "@/lib/areas/coords";
 import { diffCandidates, sortDiffItems } from "@/lib/areas/diff";
-import { mentionsUasActivity } from "@/lib/areas/classify";
+import { areaOmitsLabel, mentionsUasActivity } from "@/lib/areas/classify";
 import { parseTopSkyBuffer } from "@/lib/areas/parse-topsky";
 import {
   applyAcceptedAreaBlocks,
@@ -472,12 +472,17 @@ export function Workspace() {
         ...accepted,
         coordinates: red.coordinates,
         circleSpacingDeg: red.circleSpacingDeg,
-        label: {
-          lat: c.lat,
-          lon: c.lon,
-          text: accepted.label?.text || accepted.name,
-        },
+        // ESR94 etc. must stay unlabeled — don't invent a centre LABEL on Accept.
+        label: areaOmitsLabel(accepted)
+          ? undefined
+          : {
+              lat: c.lat,
+              lon: c.lon,
+              text: accepted.label?.text || accepted.name,
+            },
       };
+    } else if (areaOmitsLabel(accepted)) {
+      accepted = { ...accepted, label: undefined };
     }
     return accepted;
   };
@@ -514,8 +519,10 @@ export function Workspace() {
         const red = redensifyBoundCircle(a.boundCircle, spacingDeg);
         const c = a.boundCircle;
         // Keep LABEL on circle centre unless user already nudged it.
-        const label =
-          a.label && a.labelEdited
+        // Omit-label areas (ESR94) never get an active LABEL.
+        const label = areaOmitsLabel(a)
+          ? undefined
+          : a.label && a.labelEdited
             ? a.label
             : {
                 lat: c.lat,
