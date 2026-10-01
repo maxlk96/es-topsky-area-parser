@@ -1,7 +1,16 @@
 import type { AreaCategory, AreaRecord } from "./types";
 
-/** Map layer keys used by toggles (splits PCA sub-parts and ATS out of coarse categories). */
-export type LayerKey = AreaCategory | "ATS" | "PCA_SUB";
+/**
+ * Map layer keys for toggles.
+ * FS / TCT / STCA are split out of OTHER by TopSky AreaType (not by TMA name).
+ * Note: ESOS/ESGG “TMA” blocks in the file are AREA:TCT_I / AREA:TCTA — they are TCT, not a separate ATS class.
+ */
+export type LayerKey =
+  | AreaCategory
+  | "PCA_SUB"
+  | "FS"
+  | "TCT"
+  | "STCA";
 
 export type LayerVisibility = Record<LayerKey, boolean>;
 
@@ -14,7 +23,9 @@ export const DEFAULT_LAYER_VISIBILITY: LayerVisibility = {
   CBA: false,
   PCA: false,
   PCA_SUB: false,
-  ATS: false,
+  FS: false,
+  TCT: false,
+  STCA: false,
   OTHER: false,
 };
 
@@ -64,21 +75,47 @@ export const LAYER_GROUPS: LayerGroup[] = [
   {
     id: "other",
     title: "Other / system",
-    hint: "TCT, STCA, FS, SKOL, TEKVA, ATS volumes, …",
+    hint: "Plugin / system volumes (off by default)",
     toggles: [
-      { key: "OTHER", label: "TCT / STCA / FS…" },
-      { key: "ATS", label: "ATS volumes (CTR / TMA)" },
+      { key: "FS", label: "FS" },
+      { key: "TCT", label: "TCT" },
+      { key: "STCA", label: "STCA" },
+      { key: "OTHER", label: "Other misc" },
     ],
   },
 ];
 
-/** CTR/TMA-style volumes currently filed under OTHER in TopSkyAreas. */
-export function isAtsVolume(
-  area: Pick<AreaRecord, "shortName" | "name" | "category">,
+/** Stable id for hover/focus across duplicate designators (no list-index). */
+export function areaFeatureId(area: AreaRecord): string {
+  const lim = area.limits ? `${area.limits[0]}:${area.limits[1]}` : "-";
+  const c0 = area.coordinates[0];
+  const c = c0 ? `${c0[0].toFixed(5)},${c0[1].toFixed(5)}` : "noc";
+  const n = area.coordinates.length;
+  return `${area.id}::${area.name}::${area.section}::${area.areaTypeCode}::${lim}::${n}@${c}`;
+}
+
+/** FS sectors — TopSky AREA:2F (short names FS…). */
+export function isFsArea(area: Pick<AreaRecord, "areaTypeCode" | "shortName">): boolean {
+  if (area.areaTypeCode === "2F") return true;
+  return /^FS/i.test(area.shortName.trim());
+}
+
+/**
+ * TCT / TCTA volumes — AREA:TCT_I, AREA:TCTA, etc.
+ * Includes ESOS/ESGG TMA geometry used for TCT (not a separate “ATS volumes” class).
+ */
+export function isTctArea(area: Pick<AreaRecord, "areaTypeCode">): boolean {
+  const t = area.areaTypeCode.toUpperCase();
+  return t === "TCT_I" || t === "TCTA" || t.startsWith("TCT");
+}
+
+/** STCA volumes when present (AREA:STCA or type/name containing STCA). */
+export function isStcaArea(
+  area: Pick<AreaRecord, "areaTypeCode" | "shortName" | "name">,
 ): boolean {
-  if (area.category !== "OTHER") return false;
-  const t = `${area.shortName} ${area.name}`.toUpperCase();
-  return /\b(CTR|TMA|CTA|FIZ|ATZ|TIZ|RMZ|TMZ)\b/.test(t);
+  const t = area.areaTypeCode.toUpperCase();
+  if (t === "STCA" || t.startsWith("STCA")) return true;
+  return /\bSTCA\b/i.test(`${area.shortName} ${area.name}`);
 }
 
 /**
@@ -97,7 +134,13 @@ export function layerKeyFor(area: AreaRecord): LayerKey {
   if (area.category === "PCA") {
     return isPcaSubPart(area) ? "PCA_SUB" : "PCA";
   }
-  if (area.category === "OTHER" && isAtsVolume(area)) return "ATS";
+  if (area.category === "OTHER" || area.category === "P") {
+    // Prefer plugin AreaType over name heuristics (TMA names are often TCT).
+    if (isTctArea(area)) return "TCT";
+    if (isStcaArea(area)) return "STCA";
+    if (isFsArea(area)) return "FS";
+    if (area.category === "OTHER") return "OTHER";
+  }
   return area.category;
 }
 
@@ -117,7 +160,9 @@ export function countByLayerKey(areas: AreaRecord[]): Record<LayerKey, number> {
     CBA: 0,
     PCA: 0,
     PCA_SUB: 0,
-    ATS: 0,
+    FS: 0,
+    TCT: 0,
+    STCA: 0,
     OTHER: 0,
   };
   for (const a of areas) c[layerKeyFor(a)] += 1;

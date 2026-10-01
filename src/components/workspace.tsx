@@ -34,6 +34,7 @@ import type {
 import {
   DEFAULT_LAYER_VISIBILITY,
   LAYER_GROUPS,
+  areaFeatureId,
   countByLayerKey,
   groupToggleState,
   isLayerVisible,
@@ -54,6 +55,7 @@ export function Workspace() {
     DEFAULT_LAYER_VISIBILITY,
   );
   const [focusId, setFocusId] = useState<string | null>(null);
+  const [hoverKey, setHoverKey] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
 
   const [amdts, setAmdts] = useState<AmdtEntry[]>([]);
@@ -350,7 +352,9 @@ export function Workspace() {
             <Badge variant="secondary">D {counts.D}</Badge>
             <Badge variant="secondary">TRA {counts.TRA}</Badge>
             <Badge variant="secondary">CBA {counts.CBA}</Badge>
-            <Badge variant="outline">other {counts.OTHER}</Badge>
+            <Badge variant="outline">FS {counts.FS}</Badge>
+            <Badge variant="outline">TCT {counts.TCT}</Badge>
+            <Badge variant="outline">misc {counts.OTHER}</Badge>
           </div>
         </aside>
 
@@ -359,6 +363,8 @@ export function Workspace() {
             areas={areas}
             candidates={candidates}
             focusId={focusId}
+            hoverKey={hoverKey}
+            onHoverKey={setHoverKey}
             layerVisibility={layerVisibility}
           />
           <div className="pointer-events-none absolute bottom-3 left-3 rounded-md bg-white/90 px-2 py-1 text-[11px] text-slate-600 shadow">
@@ -437,12 +443,19 @@ export function Workspace() {
           />
           <ScrollArea className="h-[34%] min-h-[140px] rounded-md border border-slate-200 bg-white">
             <ul className="divide-y divide-slate-100 text-sm">
-              {visibleList.slice(0, 400).map((a, idx) => (
-                <li key={`${a.id}-${a.name}-${a.section}-${idx}`}>
+              {visibleList.slice(0, 400).map((a) => {
+                const fid = areaFeatureId(a);
+                const hovered = hoverKey === fid;
+                return (
+                <li key={fid}>
                   <button
                     type="button"
-                    className="flex w-full items-start gap-2 px-2 py-1.5 text-left hover:bg-slate-50"
+                    className={`flex w-full items-start gap-2 px-2 py-1.5 text-left hover:bg-sky-50 ${
+                      hovered ? "bg-sky-50 ring-1 ring-inset ring-sky-300" : ""
+                    }`}
                     onClick={() => setFocusId(a.id)}
+                    onMouseEnter={() => setHoverKey(fid)}
+                    onMouseLeave={() => setHoverKey(null)}
                   >
                     <Badge
                       variant={a.areaTypeCode === "3" ? "outline" : "secondary"}
@@ -461,7 +474,8 @@ export function Workspace() {
                     </span>
                   </button>
                 </li>
-              ))}
+              );
+              })}
             </ul>
           </ScrollArea>
 

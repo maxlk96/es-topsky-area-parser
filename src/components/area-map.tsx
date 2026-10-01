@@ -6,12 +6,14 @@ import {
   NavigationControl,
   setWorkerUrl,
   type GeoJSONSource,
+  type MapLayerMouseEvent,
   type StyleSpecification,
 } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { mapStyleFor } from "@/lib/areas/classify";
 import { closeRing } from "@/lib/areas/coords";
 import {
+  areaFeatureId,
   isLayerVisible,
   type LayerVisibility,
 } from "@/lib/areas/map-layers";
@@ -27,6 +29,8 @@ type Props = {
   areas: AreaRecord[];
   candidates?: AreaRecord[];
   focusId?: string | null;
+  hoverKey?: string | null;
+  onHoverKey?: (key: string | null) => void;
   layerVisibility: LayerVisibility;
 };
 
@@ -43,7 +47,6 @@ function toFeatureCollection(areas: AreaRecord[], role: Role) {
       .filter((a) => a.coordinates.length >= 3)
       .map((a) => {
         const style = mapStyleFor(a);
-        // Slightly stronger fill so R/D reads clearly on light basemap.
         const fillOpacity =
           role === "candidate"
             ? 0.14
@@ -51,6 +54,7 @@ function toFeatureCollection(areas: AreaRecord[], role: Role) {
         return {
           type: "Feature" as const,
           properties: {
+            fid: areaFeatureId(a),
             id: a.id,
             name: a.name,
             category: a.category,
@@ -70,18 +74,15 @@ function toFeatureCollection(areas: AreaRecord[], role: Role) {
   };
 }
 
-/**
- * Inline style: basemap + overlays declared together so a style URL swap
- * cannot wipe GeoJSON layers (the previous empty-map failure mode).
- */
 function buildStyle(): StyleSpecification {
   return {
     version: 8,
     sources: {
       basemap: {
         type: "raster",
-        // Proxied CARTO light_nolabels (plain, no labels); key stays server-side.
-        tiles: [`${typeof window !== "undefined" ? window.location.origin : ""}/api/basemap/{z}/{x}/{y}`],
+        tiles: [
+          `${typeof window !== "undefined" ? window.location.origin : ""}/api/basemap/{z}/{x}/{y}`,
+        ],
         tileSize: 256,
         attribution: "© OpenStreetMap © CARTO",
       },
@@ -123,6 +124,26 @@ function buildStyle(): StyleSpecification {
         },
       },
       {
+        id: "areas-hover-fill",
+        type: "fill",
+        source: "areas",
+        filter: ["==", ["get", "fid"], ""],
+        paint: {
+          "fill-color": "#0ea5e9",
+          "fill-opacity": 0.35,
+        },
+      },
+      {
+        id: "areas-hover-line",
+        type: "line",
+        source: "areas",
+        filter: ["==", ["get", "fid"], ""],
+        paint: {
+          "line-color": "#0284c7",
+          "line-width": 3.5,
+        },
+      },
+      {
         id: "cand-fill",
         type: "fill",
         source: "candidates",
@@ -157,15 +178,30 @@ function setSourceData(
   return true;
 }
 
+function setHoverFilter(map: MapLibreMap, fid: string | null) {
+  // Expression filter; cast avoids MapLibre's overloaded FilterSpecification unions.
+  const filter = ["==", ["get", "fid"], fid ?? ""] as never;
+  if (map.getLayer("areas-hover-fill")) {
+    map.setFilter("areas-hover-fill", filter);
+  }
+  if (map.getLayer("areas-hover-line")) {
+    map.setFilter("areas-hover-line", filter);
+  }
+}
+
 export function AreaMap({
   areas,
   candidates = [],
   focusId,
+  hoverKey = null,
+  onHoverKey,
   layerVisibility,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const readyRef = useRef(false);
+  const onHoverRef = useRef(onHoverKey);
+  onHoverRef.current = onHoverKey;
   const latestRef = useRef({
     visible: [] as AreaRecord[],
     candidates: [] as AreaRecord[],
@@ -200,6 +236,19 @@ export function AreaMap({
       applyLatest();
     });
 
+    const onMove = (e: MapLayerMouseEvent) => {
+      const hit = e.features?.[0];
+      const fid = (hit?.properties?.fid as string | undefined) ?? null;
+      map.getCanvas().style.cursor = fid ? "pointer" : "";
+      onHoverRef.current?.(fid);
+    };
+    const onLeave = () => {
+      map.getCanvas().style.cursor = "";
+      onHoverRef.current?.(null);
+    };
+    map.on("mousemove", "areas-fill", onMove);
+    map.on("mouseleave", "areas-fill", onLeave);
+
     map.on("error", (e) => {
       console.error("[AreaMap]", e.error?.message ?? e);
     });
@@ -228,13 +277,19 @@ export function AreaMap({
 
   useEffect(() => {
     const map = mapRef.current;
+    if (!map || !readyRef.current) return;
+    setHoverFilter(map, hoverKey);
+  }, [hoverKey]);
+
+  useEffect(() => {
+    const map = mapRef.current;
     if (!map || !focusId) return;
-    const a =
-      visible.find((x) => x.id === focusId) ||
-      candidates.find((x) => x.id === focusId);
-    if (!a || a.coordinates.length < 1) return;
-    const lons = a.coordinates.map((c) => c[0]);
-    const lats = a.coordinates.map((c) => c[1]);
+    const hit =
+      visible.find((a) => a.id === focusId) ||
+      candidates.find((a) => a.id === focusId);
+    if (!hit || hit.coordinates.length < 1) return;
+    const lons = hit.coordinates.map((c) => c[0]);
+    const lats = hit.coordinates.map((c) => c[1]);
     map.fitBounds(
       [
         [Math.min(...lons), Math.min(...lats)],
@@ -242,6 +297,7 @@ export function AreaMap({
       ],
       { padding: 60, maxZoom: 9, duration: 600 },
     );
+    onHoverRef.current?.(areaFeatureId(hit));
   }, [focusId, visible, candidates]);
 
   return <div ref={ref} className="h-full w-full min-h-[420px]" />;

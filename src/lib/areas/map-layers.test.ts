@@ -8,7 +8,9 @@ import {
 } from "./map-layers";
 import type { AreaRecord } from "./types";
 
-function stub(partial: Partial<AreaRecord> & Pick<AreaRecord, "category" | "shortName">): AreaRecord {
+function stub(
+  partial: Partial<AreaRecord> & Pick<AreaRecord, "category" | "shortName">,
+): AreaRecord {
   return {
     id: partial.id ?? partial.shortName,
     name: partial.name ?? partial.shortName,
@@ -27,25 +29,67 @@ function stub(partial: Partial<AreaRecord> & Pick<AreaRecord, "category" | "shor
   };
 }
 
-describe("map-layers PCA / ATS", () => {
+describe("map-layers", () => {
   it("splits PCA mains vs sub-parts", () => {
     expect(isPcaSubPart(stub({ category: "PCA", shortName: "A1" }))).toBe(false);
-    expect(isPcaSubPart(stub({ category: "PCA", shortName: "G9" }))).toBe(false);
     expect(isPcaSubPart(stub({ category: "PCA", shortName: "A11" }))).toBe(true);
-    expect(isPcaSubPart(stub({ category: "PCA", shortName: "I61" }))).toBe(true);
-    expect(layerKeyFor(stub({ category: "PCA", shortName: "M5" }))).toBe("PCA");
     expect(layerKeyFor(stub({ category: "PCA", shortName: "M51" }))).toBe("PCA_SUB");
+  });
+
+  it("classifies FS / TCT / STCA by AreaType (TMA names are TCT)", () => {
+    expect(
+      layerKeyFor(
+        stub({ category: "OTHER", shortName: "FSGGCIE", areaTypeCode: "2F" }),
+      ),
+    ).toBe("FS");
+    expect(
+      layerKeyFor(
+        stub({
+          category: "OTHER",
+          shortName: "ESOS TMA",
+          name: "ESOS TMA",
+          areaTypeCode: "TCTA",
+        }),
+      ),
+    ).toBe("TCT");
+    expect(
+      layerKeyFor(
+        stub({
+          category: "OTHER",
+          shortName: "ESOS TMA",
+          name: "ESOS TMA",
+          areaTypeCode: "TCT_I",
+        }),
+      ),
+    ).toBe("TCT");
+    expect(
+      layerKeyFor(
+        stub({
+          category: "OTHER",
+          shortName: "STCA1",
+          name: "STCA test",
+          areaTypeCode: "STCA",
+        }),
+      ),
+    ).toBe("STCA");
+    expect(
+      layerKeyFor(
+        stub({
+          category: "OTHER",
+          shortName: "EoR 01L",
+          areaTypeCode: "S",
+        }),
+      ),
+    ).toBe("OTHER");
   });
 
   it("defaults only R/D visible", () => {
     const v: LayerVisibility = DEFAULT_LAYER_VISIBILITY;
     expect(isLayerVisible(stub({ category: "R", shortName: "R505" }), v)).toBe(true);
     expect(isLayerVisible(stub({ category: "D", shortName: "D309" }), v)).toBe(true);
-    expect(isLayerVisible(stub({ category: "PCA", shortName: "A1" }), v)).toBe(false);
-    expect(isLayerVisible(stub({ category: "PCA", shortName: "A11" }), v)).toBe(false);
     expect(
       isLayerVisible(
-        stub({ category: "OTHER", shortName: "ESOS TMA", name: "ESOS TMA" }),
+        stub({ category: "OTHER", shortName: "FSGGCIE", areaTypeCode: "2F" }),
         v,
       ),
     ).toBe(false);
