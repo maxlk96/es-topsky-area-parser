@@ -24,11 +24,12 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import {
   CIRCLE_SPACING_PRESETS,
+  autoSpacingForRadius,
   circleStepCount,
   clampCircleSpacing,
-  defaultSpacingForRadius,
   inferSpacingFromRing,
   redensifyBoundCircle,
+  redensifyBoundCircleAuto,
 } from "@/lib/areas/coords";
 import { diffCandidates, sortDiffItems } from "@/lib/areas/diff";
 import { mentionsUasActivity } from "@/lib/areas/classify";
@@ -465,12 +466,9 @@ export function Workspace() {
         section: item.candidate.section ?? "tempo",
         mapDefaultVisible: true,
       };
-      // Circles: keep BOUND:C and densify at ESAA Spacing° (tweakable after Accept).
+      // Circles: always densify at auto Spacing° from radius (tweakable after Accept).
       if (accepted.boundCircle) {
-        const spacing =
-          accepted.circleSpacingDeg ??
-          defaultSpacingForRadius(accepted.boundCircle.radiusNm);
-        const red = redensifyBoundCircle(accepted.boundCircle, spacing);
+        const red = redensifyBoundCircleAuto(accepted.boundCircle);
         accepted = {
           ...accepted,
           coordinates: red.coordinates,
@@ -536,10 +534,7 @@ export function Workspace() {
           mapDefaultVisible: true,
         };
         if (accepted.boundCircle) {
-          const spacing =
-            accepted.circleSpacingDeg ??
-            defaultSpacingForRadius(accepted.boundCircle.radiusNm);
-          const red = redensifyBoundCircle(accepted.boundCircle, spacing);
+          const red = redensifyBoundCircleAuto(accepted.boundCircle);
           accepted = {
             ...accepted,
             coordinates: red.coordinates,
@@ -978,11 +973,13 @@ export function Workspace() {
           {(() => {
             const sel = areas.find((a) => areaFeatureId(a) === selectedKey);
             if (!sel?.boundCircle) return null;
+            const autoSp = autoSpacingForRadius(sel.boundCircle.radiusNm);
             const spacing =
               sel.circleSpacingDeg ??
               inferSpacingFromRing(sel.coordinates) ??
-              defaultSpacingForRadius(sel.boundCircle.radiusNm);
+              autoSp;
             const steps = circleStepCount(spacing);
+            const isAuto = Math.abs(spacing - autoSp) < 0.05;
             return (
               <div className="rounded-md border border-slate-200 bg-white px-2 py-2">
                 <p className="text-xs font-semibold text-slate-800">Circle ring</p>
@@ -991,9 +988,20 @@ export function Workspace() {
                   <span className="font-medium text-slate-700">
                     {steps} steps ({spacing.toFixed(1)}°)
                   </span>
-                  . Tweak Spacing° (TopSky COORD_CIRCLE) then export.
+                  {isAuto ? " · auto from radius" : ` · auto would be ${autoSp}°`}.
+                  Override Spacing° if needed, then export.
                 </p>
                 <div className="mt-1.5 flex flex-wrap gap-1">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={isAuto ? "default" : "secondary"}
+                    className="h-7 px-2 text-[11px]"
+                    onClick={() => applyCircleSpacing(areaFeatureId(sel), autoSp)}
+                    title={`Auto from radius → ${circleStepCount(autoSp)} vertices @ ${autoSp}°`}
+                  >
+                    Auto {autoSp}°
+                  </Button>
                   {CIRCLE_SPACING_PRESETS.map((p) => (
                     <Button
                       key={p}

@@ -8,7 +8,7 @@ import {
 import {
   closeRing,
   densifyCircle,
-  defaultSpacingForRadius,
+  autoSpacingForRadius,
   parseCompactCoord,
 } from "@/lib/areas/coords";
 import { parseAipVerticalToken } from "@/lib/areas/limits";
@@ -239,7 +239,7 @@ function buildAreaFromSection(
   const boundCircle = parseCircleFromChunk(section.chunk);
   let circleSpacingDeg: number | undefined;
   if (boundCircle && coordinates.length < 3) {
-    circleSpacingDeg = defaultSpacingForRadius(boundCircle.radiusNm);
+    circleSpacingDeg = autoSpacingForRadius(boundCircle.radiusNm);
     coordinates = densifyCircle(
       boundCircle.lat,
       boundCircle.lon,

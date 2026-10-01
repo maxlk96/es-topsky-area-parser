@@ -8,7 +8,7 @@ import {
 import {
   closeRing,
   densifyCircle,
-  defaultSpacingForRadius,
+  autoSpacingForRadius,
   parseCompactCoord,
 } from "@/lib/areas/coords";
 import { parseAipVerticalToken } from "@/lib/areas/limits";
@@ -138,7 +138,7 @@ export function parseEnr51Html(
     const boundCircle = parseCircle(chunk);
     let circleSpacingDeg: number | undefined;
     if (boundCircle && coordinates.length < 3) {
-      circleSpacingDeg = defaultSpacingForRadius(boundCircle.radiusNm);
+      circleSpacingDeg = autoSpacingForRadius(boundCircle.radiusNm);
       coordinates = densifyCircle(
         boundCircle.lat,
         boundCircle.lon,

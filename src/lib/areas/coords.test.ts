@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  autoSpacingForRadius,
   circleStepCount,
   densifyCircle,
   inferSpacingFromRing,
   parseCompactCoord,
   parseTopSkyCoordPair,
   redensifyBoundCircle,
+  redensifyBoundCircleAuto,
   toTopSkyCoord,
 } from "./coords";
 
@@ -44,5 +46,21 @@ describe("coords", () => {
     );
     expect(fine.coordinates.length).toBe(73);
     expect(fine.circleSpacingDeg).toBe(5);
+  });
+
+  it("auto-selects Spacing° from radius", () => {
+    expect(autoSpacingForRadius(0.54)).toBe(15);
+    expect(autoSpacingForRadius(1.1)).toBe(10);
+    expect(autoSpacingForRadius(1.2)).toBe(10);
+    expect(autoSpacingForRadius(5.4)).toBe(10);
+    expect(autoSpacingForRadius(8)).toBe(15);
+    expect(autoSpacingForRadius(30)).toBe(30);
+    const auto = redensifyBoundCircleAuto({
+      lat: 59.3,
+      lon: 17.8,
+      radiusNm: 1.1,
+    });
+    expect(auto.circleSpacingDeg).toBe(10);
+    expect(auto.coordinates.length).toBe(37);
   });
 });

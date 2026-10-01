@@ -166,16 +166,23 @@ export function densifyCircle(
 }
 
 /**
- * Heuristic Spacing° by radius NM — aligned to ESAA TopSkyAreas practice
- * (most ~1–2 NM circles use 10° / 36 vertices; tiny often 15°).
+ * Auto Spacing° from circle radius (NM) — ESAA TopSkyAreas practice:
+ * tiny → coarser; ~1 NM → 10° (36 verts); larger → gradually coarser.
  */
 export function defaultSpacingForRadius(radiusNm: number): number {
-  if (radiusNm <= 0.7) return 15;
-  if (radiusNm <= 1.5) return 10;
-  if (radiusNm <= 3) return 12;
-  if (radiusNm <= 8) return 15;
-  if (radiusNm <= 20) return 20;
+  const r = Number.isFinite(radiusNm) ? Math.abs(radiusNm) : 1;
+  if (r <= 0.7) return 15;
+  if (r <= 1.5) return 10;
+  if (r <= 3) return 12;
+  if (r <= 6) return 10;
+  if (r <= 12) return 15;
+  if (r <= 25) return 20;
   return 30;
+}
+
+/** Alias used by UI / Accept — always pick Spacing° from radius. */
+export function autoSpacingForRadius(radiusNm: number): number {
+  return defaultSpacingForRadius(radiusNm);
 }
 
 /** Re-build polygon ring for a circle area at a chosen Spacing°. */
@@ -193,4 +200,13 @@ export function redensifyBoundCircle(
     ),
     circleSpacingDeg,
   };
+}
+
+/** Densify using auto Spacing° from radius. */
+export function redensifyBoundCircleAuto(bound: {
+  lat: number;
+  lon: number;
+  radiusNm: number;
+}): { coordinates: [number, number][]; circleSpacingDeg: number } {
+  return redensifyBoundCircle(bound, autoSpacingForRadius(bound.radiusNm));
 }
