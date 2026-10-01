@@ -215,6 +215,25 @@ See para 3.1.1. Information about activity obtainable from STOCKHOLM ACC.
     expect(d171.section).toBe("other");
   });
 
+  it("ESR24 Drottningholm stays AREA:3 (Transportstyrelsen/Residens; no ATS false-hit)", () => {
+    const html = `
+<html><body>
+ESR24 DROTTNINGHOLM
+A circle with radius 2000 m centred on 591920N 0175230E.
+2000 ft AMSL
+GND
+Residens.
+Särskilda tillstånd från Transportstyrelsen krävs förutom för svenska luftfartyg som används av svenska Försvarsmakten, Polismyndigheten, Säkerhetspolisen, Kustbevakningen, Sjöfartsverket, Lantmäteriet, Hovstaten, ambulanstransport med hög medicinsk prioritet eller med luftfartyg när de används i räddningsinsatser enligt bestämmelserna i lagen om skydd mot olyckor (2003:778).
+Residence.
+Special permission by Swedish Transport Agency is required, except for Swedish aircraft operated by Swedish Armed Forces, Police Authority, Swedish Security Service, Swedish Coast Guard, Swedish Maritime Administration, National Land Survey Office, The Royal Court of Sweden, ambulance transport with high medical priority or by aircraft engaged in rescue operations in accordance with Civil Protection Act (2003:778).
+</body></html>`;
+    const areas = parseEnr51Html(html, { amdtId: "test-amdt" });
+    const r24 = areas.find((a) => a.id === "ESR24")!;
+    expect(r24.areaTypeCode).toBe("3");
+    expect(r24.noaiw).toBe(false);
+    expect(r24.activation).toEqual({ type: "ALWAYS" });
+  });
+
   it("parses ESR18A/B/C names that contain a comma (BOFORS, VILLINGSBERG)", () => {
     const html = `
 <html><body>

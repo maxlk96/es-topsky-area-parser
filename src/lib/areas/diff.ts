@@ -28,6 +28,11 @@ function supSortKey(number: string | undefined): [number, number] {
 
 /** ~100 m — AIP compact seconds vs TopSky sub-second noise. */
 const COORD_TOLERANCE_NM = 0.055;
+/**
+ * Metre→NM AIP circles (2000 m ≈ 1.08 NM) often stored as 1.1 / 1.2 in TopSky.
+ * Centres must still match; radius may drift by this much without a real change.
+ */
+const CIRCLE_RADIUS_TOLERANCE_NM = 0.15;
 
 function openRing(coords: [number, number][]): [number, number][] {
   if (coords.length < 2) return coords;
@@ -61,7 +66,35 @@ function circlesMatch(
   if (!a || !b) return undefined;
   const centerNm = haversineNm([a.lon, a.lat], [b.lon, b.lat]);
   const radiusDiff = Math.abs(a.radiusNm - b.radiusNm);
-  return centerNm <= COORD_TOLERANCE_NM && radiusDiff <= 0.03;
+  return (
+    centerNm <= COORD_TOLERANCE_NM &&
+    radiusDiff <= CIRCLE_RADIUS_TOLERANCE_NM
+  );
+}
+
+/** Ring densified from a circle (or TopSky without parsed BOUND:C) vs AIP circle. */
+function ringMatchesCircle(
+  ring: [number, number][],
+  circle: NonNullable<AreaRecord["boundCircle"]>,
+): boolean {
+  const open = openRing(ring);
+  if (open.length < 3) return false;
+  const centre: [number, number] = [circle.lon, circle.lat];
+  const c = ringCentroid(open);
+  if (!c || haversineNm(c, centre) > 0.12) return false;
+  const r = maxRadiusNm(open, centre);
+  return Math.abs(r - circle.radiusNm) <= CIRCLE_RADIUS_TOLERANCE_NM;
+}
+
+/** Fold Swedish letters for name equality (HÄRNÖN ≈ HÄRNON / HARNON). */
+function normName(s: string): string {
+  return s
+    .toLocaleUpperCase("sv-SE")
+    .replace(/[ÅÄ]/g, "A")
+    .replace(/Ö/g, "O")
+    .replace(/[ÉÈÊ]/g, "E")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function ringCentroid(ring: [number, number][]): [number, number] | null {
@@ -163,42 +196,15 @@ function ringsEquivalent(
   return h <= 0.08;
 }
 
-function activationKey(area: AreaRecord): string {
-  const t = area.activation?.type || "NONE";
-  const key = area.activation?.key || "";
-  return `${t}:${key}`;
-}
-
 /**
- * Compare existing TopSky vs AIP candidate. Returns human-readable change reasons.
- * Close-ring duplicates, densification-only vertex churn, and sub-tolerance
- * noise are ignored (no-op → empty → not listed in Verify/Diff).
+ * Geometry / limits / name only — the airspace footprint Max cares about for
+ * "already correct" TopSky blocks.
  */
-export function explainAreaChanges(
+function explainFootprintChanges(
   existing: AreaRecord,
   candidate: AreaRecord,
 ): string[] {
   const reasons: string[] = [];
-
-  if (!!existing.noaiw !== !!candidate.noaiw) {
-    reasons.push(
-      candidate.noaiw ? "NOAIW added" : "NOAIW removed",
-    );
-  }
-
-  const typeEx = (existing.areaTypeCode || "").trim();
-  const typeCand = (candidate.areaTypeCode || "").trim();
-  if (typeEx && typeCand && typeEx !== typeCand) {
-    reasons.push(`AREA:${typeEx} → AREA:${typeCand}`);
-  }
-
-  const actEx = activationKey(existing);
-  const actCand = activationKey(candidate);
-  if (actEx !== actCand) {
-    reasons.push(
-      `ACTIVE ${activationLabel(existing)} → ${activationLabel(candidate)}`,
-    );
-  }
 
   const limEx = limitsKey(existing);
   const limCand = limitsKey(candidate);
@@ -206,20 +212,16 @@ export function explainAreaChanges(
     reasons.push(`LIMITS ${limEx} → ${limCand}`);
   }
 
-  const nameEx = (existing.name || "").toLocaleUpperCase("sv-SE");
-  const nameCand = (candidate.name || "").toLocaleUpperCase("sv-SE");
+  const nameEx = normName(existing.name || "");
+  const nameCand = normName(candidate.name || "");
   if (nameEx && nameCand && nameEx !== nameCand) {
     reasons.push(`Name ${existing.name} → ${candidate.name}`);
   }
 
-  // LABEL coords are not compared: Accept keeps baseline LABEL; ENR/PCA
-  // candidates often invent a centroid that would flood false "changed" rows.
+  // LABEL coords are not compared: Accept keeps baseline LABEL.
 
   const circleEq = circlesMatch(existing.boundCircle, candidate.boundCircle);
-  if (circleEq === true) {
-    // Densified rings may differ; circle definition matches.
-    return reasons;
-  }
+  if (circleEq === true) return reasons;
   if (circleEq === false) {
     const a = existing.boundCircle!;
     const b = candidate.boundCircle!;
@@ -229,6 +231,21 @@ export function explainAreaChanges(
           ? " (centre moved)"
           : ""),
     );
+    return reasons;
+  }
+
+  // One side has BOUND:C, the other only a densified ring (common when TopSky
+  // BOUND:C parse fails or ENR supplies circle + ring).
+  if (
+    existing.boundCircle &&
+    ringMatchesCircle(candidate.coordinates, existing.boundCircle)
+  ) {
+    return reasons;
+  }
+  if (
+    candidate.boundCircle &&
+    ringMatchesCircle(existing.coordinates, candidate.boundCircle)
+  ) {
     return reasons;
   }
 
@@ -256,6 +273,38 @@ export function explainAreaChanges(
     }
   }
   return reasons;
+}
+
+function explainPolicyChanges(
+  existing: AreaRecord,
+  candidate: AreaRecord,
+): string[] {
+  const reasons: string[] = [];
+  if (!!existing.noaiw !== !!candidate.noaiw) {
+    reasons.push(candidate.noaiw ? "NOAIW added" : "NOAIW removed");
+  }
+  const typeEx = (existing.areaTypeCode || "").trim();
+  const typeCand = (candidate.areaTypeCode || "").trim();
+  if (typeEx && typeCand && typeEx !== typeCand) {
+    reasons.push(`AREA:${typeEx} → AREA:${typeCand}`);
+  }
+  // ACTIVE/AUP/ALWAYS never compared — ESAA ops activation is authoritative.
+  return reasons;
+}
+
+/**
+ * Compare existing TopSky vs AIP candidate. Returns human-readable change reasons.
+ * Functionally identical footprints (geometry/limits/name) are no-ops even when
+ * AREA type / NOAIW / ACTIVE differ — do not "fix" already-correct TopSky.
+ * When the footprint really changes, policy diffs are included too.
+ */
+export function explainAreaChanges(
+  existing: AreaRecord,
+  candidate: AreaRecord,
+): string[] {
+  const footprint = explainFootprintChanges(existing, candidate);
+  if (footprint.length === 0) return [];
+  return [...explainPolicyChanges(existing, candidate), ...footprint];
 }
 
 export function areasEquivalent(existing: AreaRecord, candidate: AreaRecord): boolean {

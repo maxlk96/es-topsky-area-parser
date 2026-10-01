@@ -225,7 +225,7 @@ describe("diffCandidates reasons", () => {
     expect(item.notes.some((n) => /permanent/i.test(n))).toBe(false);
   });
 
-  it("flags NOAIW-only ENR 5.1 §2.2.1 updates as changed", () => {
+  it("ignores NOAIW/AREA/ACTIVE-only diffs when footprint matches (already-correct TopSky)", () => {
     const ring: [number, number][] = [
       [22.7, 66.3],
       [23.2, 66.3],
@@ -241,6 +241,24 @@ describe("diffCandidates reasons", () => {
         noaiw: false,
         directives: [],
         coordinates: ring,
+        activation: { type: "ALWAYS" },
+      }),
+      stub({
+        id: "ESR102",
+        shortName: "R102",
+        name: "HAGA",
+        areaTypeCode: "4F",
+        noaiw: true,
+        directives: ["NOAIW"],
+        activation: { type: "ALWAYS" },
+        boundCircle: { lat: 59.3639, lon: 18.0389, radiusNm: 0.54 },
+        coordinates: [
+          [18.0389, 59.3739],
+          [18.0489, 59.3639],
+          [18.0389, 59.3539],
+          [18.0289, 59.3639],
+          [18.0389, 59.3739],
+        ],
       }),
     ];
     const candidates = [
@@ -251,12 +269,53 @@ describe("diffCandidates reasons", () => {
         noaiw: true,
         directives: ["NOAIW"],
         coordinates: ring,
+        activation: { type: "AUP", key: "ESR3" },
+        provenance: { source: "enr51" },
+      }),
+      stub({
+        id: "ESR102",
+        shortName: "R102",
+        name: "HAGA",
+        areaTypeCode: "3",
+        noaiw: false,
+        directives: [],
+        activation: { type: "AUP", key: "ESR102" },
+        boundCircle: { lat: 59.3639, lon: 18.0389, radiusNm: 0.54 },
+        coordinates: [
+          [18.0389, 59.3739],
+          [18.0489, 59.3639],
+          [18.0389, 59.3539],
+          [18.0289, 59.3639],
+          [18.0389, 59.3739],
+        ],
         provenance: { source: "enr51" },
       }),
     ];
-    const item = diffCandidates(existing, candidates)[0]!;
-    expect(item.status).toBe("changed");
-    expect(item.notes).toContain("NOAIW added");
+    expect(diffCandidates(existing, candidates)).toEqual([]);
+  });
+
+  it("still flags real LIMITS / geometry changes (with policy notes)", () => {
+    const ring: [number, number][] = [
+      [18, 59],
+      [18.1, 59],
+      [18.1, 59.1],
+      [18, 59.1],
+      [18, 59],
+    ];
+    const items = diffCandidates(
+      [stub({ id: "ESR13", limits: [0, 335], coordinates: ring })],
+      [
+        stub({
+          id: "ESR13",
+          limits: [0, 355],
+          coordinates: ring,
+          noaiw: true,
+          provenance: { source: "enr51" },
+        }),
+      ],
+    );
+    expect(items[0]!.status).toBe("changed");
+    expect(items[0]!.notes.some((n) => n.includes("LIMITS"))).toBe(true);
   });
 });
 

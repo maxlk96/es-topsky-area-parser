@@ -230,15 +230,22 @@ export function parseEnr51Html(
     }
 
     const inferred = inferAreaTypeFromRemarks(chunk);
-    // Permanent ENR R/D with flying/military often 4F; circle urban (Nynäshamn) often 3.
-    // Prefer remark inference; default permanent R/D without ATS keywords → keep inferred.
+    // Permanent ENR R/D with flying/military often 4F; urban/residens/prison often 3.
+    // Prefer remark inference. Never use bare ATS/ACC/ATC substrings — they false-hit
+    // Swedish/English prose ("räddningsinsatser", "accordance") and forced AREA:4F
+    // on ESR24 Drottningholm etc.
     const flying =
-      /military|flygverksamhet|aviation operations|ATS|ACC|ATC/i.test(chunk);
-    const areaTypeCode = flying
-      ? "4F"
-      : inferred.areaTypeCode === "4F"
-        ? "4F"
-        : "3";
+      hasAviationFlyingWording(chunk) ||
+      /\bmilitary\s+(operations|activities)\b/i.test(chunk);
+    // Transportstyrelsen / Residens / nature → trust inferred type:3 over flying chrome.
+    const areaTypeCode =
+      inferred.reason === "no_ats_crossing_authority"
+        ? inferred.areaTypeCode
+        : flying
+          ? "4F"
+          : inferred.areaTypeCode === "4F"
+            ? "4F"
+            : "3";
     // NOAIW: ENR 5.1 §2.2.1 government list (Max “5.2.2.1”), clear aviation
     // wording, or ATS/ACC activity — not every AREA:4F.
     const atsOrActivity =
