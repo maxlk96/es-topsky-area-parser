@@ -1,4 +1,4 @@
-# ES-Topsky Area Manager
+# ES-TopSky Area Parser
 
 Web tool for VATSIM Scandinavia ESAA maintainers: load `TopSkyAreas.txt`, map areas with HMI-aligned colours, ingest LFV AIP SUPs, diff/verify, Accept, and export Latin-1 tempo R/D blocks.
 
@@ -11,7 +11,6 @@ Web tool for VATSIM Scandinavia ESAA maintainers: load `TopSkyAreas.txt`, map ar
 ## Run on your machine
 
 ```bash
-# After you create/link a GitHub repo from this Cursor project:
 git clone <your-repo-url>
 cd <repo>
 git checkout cursor/area-manager-mvp-5762
@@ -29,7 +28,7 @@ Dev server binds to port **43127** (not 3000).
 If this project still has no durable GitHub remote: use **Create repo** in the Cursor agent view, then clone as above. Alternatively unpack a source archive from the agent artifacts (if attached), then:
 
 ```bash
-cd es-topsky-area-manager   # or the unpacked folder
+cd es-topsky-area-parser   # or the unpacked folder
 npm install
 npm run dev
 ```
@@ -62,6 +61,12 @@ npm start         # serve production build on :43127
 - OTHER (TCT/STCA/…): round-trip; hidden on map by default.
 
 See Project docs / plan for full taxonomy, HMI colours, and TopSky Developer Guide notes.
+
+## Deploy
+
+This app uses **Next.js Route Handlers** (LFV eAIP proxy, TopSky fetch, basemap tiles, PCA reload). **GitHub Pages is static-only** and cannot run those API routes.
+
+Recommended: deploy the full Next.js app to **Vercel** or **Cloudflare (OpenNext)** from the GitHub repo. A starter workflow is in `.github/workflows/deploy-vercel.yml` (needs a Vercel project + secrets). For a pure static mirror of the UI without AIP ingest, Pages is not sufficient for the maintainer workflow.
 
 ## Stack
 

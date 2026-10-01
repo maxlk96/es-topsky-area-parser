@@ -16,7 +16,7 @@ export async function GET(_req: Request, { params }: Params) {
   const key = process.env.CARTO_API_KEY?.trim();
   const upstream = `https://a.basemaps.cartocdn.com/light_nolabels/${z}/${x}/${y}@2x.png`;
   const headers: HeadersInit = {
-    "User-Agent": "es-topsky-area-manager/0.1",
+    "User-Agent": "es-topsky-area-parser/0.1",
     Accept: "image/png,*/*",
   };
   if (key) headers.Authorization = `Bearer ${key}`;

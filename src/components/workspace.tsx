@@ -851,7 +851,7 @@ export function Workspace() {
       <header className="flex flex-wrap items-center gap-3 border-b border-slate-200/80 bg-white/80 px-4 py-3 backdrop-blur">
         <div className="min-w-0">
           <p className="font-[family-name:var(--font-display)] text-lg font-semibold tracking-tight text-slate-900">
-            ES-Topsky Area Manager
+            ES-TopSky Area Parser
           </p>
           <p className="text-xs text-slate-500">
             Baseline: {baselineKind === "github" ? "GitHub main" : "Local file"} · {encoding} ·{" "}

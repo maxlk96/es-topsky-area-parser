@@ -16,9 +16,9 @@ const sans = IBM_Plex_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "ES-Topsky Area Manager",
+  title: "ES-TopSky Area Parser",
   description:
-    "Manage ESAA TopSkyAreas.txt from AIP SUPs — map, diff, and export.",
+    "Parse and maintain ESAA TopSkyAreas.txt from AIP SUPs — map, diff, and export.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
