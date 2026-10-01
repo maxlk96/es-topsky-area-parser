@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import {
   Map as MapLibreMap,
+  Marker,
   NavigationControl,
   setWorkerUrl,
   type GeoJSONSource,
@@ -37,8 +38,31 @@ type Props = {
   selectedKey?: string | null;
   onHoverKey?: (key: string | null) => void;
   onSelectKey?: (key: string | null) => void;
+  /** Show existing LABELs and allow drag-nudge (never invents labels). */
+  labelPlacer?: boolean;
+  onLabelMove?: (fid: string, lat: number, lon: number) => void;
   layerVisibility: LayerVisibility;
 };
+
+function makeLabelEl(text: string, selected: boolean, edited: boolean): HTMLDivElement {
+  const el = document.createElement("div");
+  el.className = "area-label-marker";
+  el.textContent = text;
+  el.style.cssText = [
+    "padding:2px 6px",
+    "font:600 11px/1.2 ui-sans-serif,system-ui,sans-serif",
+    "color:#0f172a",
+    "background:" + (edited ? "#fef3c7" : selected ? "#e0f2fe" : "rgba(255,255,255,0.92)"),
+    "border:1px solid " + (selected ? "#0284c7" : edited ? "#d97706" : "#94a3b8"),
+    "border-radius:4px",
+    "box-shadow:0 1px 2px rgba(15,23,42,0.12)",
+    "white-space:nowrap",
+    "cursor:grab",
+    "user-select:none",
+    "pointer-events:auto",
+  ].join(";");
+  return el;
+}
 
 function normalizeKeys(key: HoverKey | undefined): string[] {
   if (key == null || key === "") return [];
@@ -251,6 +275,8 @@ export function AreaMap({
   selectedKey = null,
   onHoverKey,
   onSelectKey,
+  labelPlacer = false,
+  onLabelMove,
   layerVisibility,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
@@ -258,8 +284,11 @@ export function AreaMap({
   const readyRef = useRef(false);
   const onHoverRef = useRef(onHoverKey);
   const onSelectRef = useRef(onSelectKey);
+  const onLabelMoveRef = useRef(onLabelMove);
+  const markersRef = useRef<Marker[]>([]);
   onHoverRef.current = onHoverKey;
   onSelectRef.current = onSelectKey;
+  onLabelMoveRef.current = onLabelMove;
   const latestRef = useRef({
     visible: [] as AreaRecord[],
     candidates: [] as AreaRecord[],
@@ -370,6 +399,43 @@ export function AreaMap({
     );
     fitAreas(map, hits);
   }, [fitAreaIds, visible, candidates]);
+
+  // Label placer: only areas that already have a LABEL (never invent).
+  useEffect(() => {
+    const map = mapRef.current;
+    for (const m of markersRef.current) m.remove();
+    markersRef.current = [];
+    if (!map || !readyRef.current || !labelPlacer) return;
+
+    const labeled = visible.filter((a) => a.label);
+    for (const a of labeled) {
+      const fid = areaFeatureId(a);
+      const text = (a.label!.text || a.name || a.id).toUpperCase();
+      const el = makeLabelEl(text, selectedKey === fid, !!a.labelEdited);
+      const marker = new Marker({ element: el, draggable: true })
+        .setLngLat([a.label!.lon, a.label!.lat])
+        .addTo(map);
+      marker.on("dragstart", () => {
+        el.style.cursor = "grabbing";
+      });
+      marker.on("dragend", () => {
+        el.style.cursor = "grab";
+        const { lng, lat } = marker.getLngLat();
+        onLabelMoveRef.current?.(fid, lat, lng);
+        onSelectRef.current?.(fid);
+      });
+      el.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        onSelectRef.current?.(fid);
+      });
+      markersRef.current.push(marker);
+    }
+
+    return () => {
+      for (const m of markersRef.current) m.remove();
+      markersRef.current = [];
+    };
+  }, [labelPlacer, visible, selectedKey]);
 
   return <div ref={ref} className="h-full w-full min-h-[420px]" />;
 }

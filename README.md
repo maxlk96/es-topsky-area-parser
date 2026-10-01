@@ -48,6 +48,7 @@ npm start         # serve production build on :43127
 2. Fetch **AMDT** list from LFV eAIP → pick Currently Effective → **Scan SUPs**.
 3. Select temporary R/D SUPs → **Parse → diff** (New / Changed / Excluded UAS / Present).
 4. **Accept** into the working copy → **Export** `TopSkyAreas.txt` (Latin-1; expired tempo removed when validity is known).
+5. Optional: enable **Label placer** (right panel) → drag existing LABELs on the map → Export writes updated `LABEL:` lines (unlabeled areas stay unlabeled).
 
 ## Domain rules (summary)
 
@@ -55,6 +56,7 @@ npm start         # serve production build on :43127
 - Activation: **AUP or manual only** — never generate `ACTIVE:NOTAM`.
 - UAS-only areas: excluded (not VATSIM).
 - `LIMITS`: hundreds of feet; AMSL ft → `ft/100` (e.g. 2500 → `25`).
+- LABEL placer: nudge existing labels only; never invent LABEL for unlabeled baseline blocks.
 - OTHER (TCT/STCA/…): round-trip; hidden on map by default.
 
 See Project docs / plan for full taxonomy, HMI colours, and TopSky Developer Guide notes.

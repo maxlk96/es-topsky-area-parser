@@ -40,6 +40,8 @@ export interface AreaRecord {
   activation?: { type: ActivationType; key?: string; raw?: string[] };
   directives: string[];
   label?: AreaLabel;
+  /** True when the user nudged an existing LABEL in the label placer. Never invent labels. */
+  labelEdited?: boolean;
   mapDefaultVisible: boolean;
   noaiw: boolean;
   boundCircle?: { lat: number; lon: number; radiusNm: number };

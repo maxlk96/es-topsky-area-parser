@@ -1,6 +1,63 @@
 import { toTopSkyCoord, closeRing } from "./coords";
 import { formatLimits } from "./limits";
-import type { AreaRecord } from "./types";
+import type { AreaLabel, AreaRecord } from "./types";
+
+export function formatLabelLine(label: AreaLabel): string {
+  const latLon = toTopSkyCoord(label.lat, label.lon).split(" ");
+  const text = (label.text || "").toUpperCase();
+  return `LABEL:${latLon[0]}:${latLon[1]}:${text}`;
+}
+
+/**
+ * Replace an existing LABEL line in a block. Never inserts a LABEL if none exists
+ * (Stockholm / other unlabeled areas must stay unlabeled).
+ */
+export function patchLabelInBlock(block: string, label: AreaLabel): string {
+  if (!/(^|\n)LABEL:/i.test(block)) return block;
+  return block.replace(/(^|\n)LABEL:.*$/im, `$1${formatLabelLine(label)}`);
+}
+
+/**
+ * Patch LABEL coordinates for labelEdited areas across the whole file.
+ * Skips areas with no LABEL line in their block — never invents labels.
+ */
+export function applyLabelEdits(fileText: string, areas: AreaRecord[]): string {
+  let text = fileText.replace(/\r\n/g, "\n");
+  for (const area of areas) {
+    if (!area.labelEdited || !area.label) continue;
+    text = patchLabelForAreaInFile(text, area);
+  }
+  return text;
+}
+
+function patchLabelForAreaInFile(text: string, area: AreaRecord): string {
+  const id = area.id.toUpperCase();
+  // Prefer designator comment header //ESR… / //ESD…
+  const headerRe = new RegExp(`//${id}\\b[^\\n]*\\n`, "i");
+  const headerMatch = headerRe.exec(text);
+  let start = headerMatch?.index ?? -1;
+  if (start < 0) {
+    // Fall back to AREA: line containing short name
+    const areaRe = new RegExp(
+      `^AREA:[^:\\n]+:\\s*${escapeRegExp(area.shortName)}\\s*$`,
+      "im",
+    );
+    const m = areaRe.exec(text);
+    if (!m || m.index == null) return text;
+    start = m.index;
+  }
+  // Block ends at the next //ES… designator comment (not at this block's AREA: line).
+  const rest = text.slice(start);
+  const endRel = rest.search(/\n\/\/ES[A-Z0-9]/i);
+  const block = endRel >= 0 ? rest.slice(0, endRel) : rest;
+  if (!/(^|\n)LABEL:/i.test(block)) return text; // unlabeled — leave untouched
+  const patched = patchLabelInBlock(block, area.label!);
+  return text.slice(0, start) + patched + text.slice(start + block.length);
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 export function formatAreaBlock(area: AreaRecord): string {
   const lines: string[] = [];
@@ -20,9 +77,9 @@ export function formatAreaBlock(area: AreaRecord): string {
     lines.push("ACTIVE:1");
   }
   // MANUAL / NONE → no ACTIVE line
+  // Only emit LABEL when the area already has one (or newly accepted SUP with label).
   if (area.label) {
-    const latLon = toTopSkyCoord(area.label.lat, area.label.lon).split(" ");
-    lines.push(`LABEL:${latLon[0]}:${latLon[1]}:${labelText}`);
+    lines.push(formatLabelLine({ ...area.label, text: labelText }));
   }
   if (area.limits) {
     lines.push(formatLimits(area.limits[0], area.limits[1]));
@@ -85,6 +142,10 @@ export function mergeTempoSection(
     .map((a) => {
       // Prefer preserving rawBlock for untouched topsky areas
       if (a.provenance.source === "topsky" && a.rawBlock && !a.exclusionReason) {
+        if (a.labelEdited && a.label) {
+          // Patch LABEL only — never insert if the baseline block had none.
+          return patchLabelInBlock(a.rawBlock, a.label).trimEnd() + "\n";
+        }
         return a.rawBlock.trimEnd() + "\n";
       }
       return formatAreaBlock(a);

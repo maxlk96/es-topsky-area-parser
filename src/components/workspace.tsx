@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 const AreaMap = dynamic(
@@ -24,8 +24,12 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { diffCandidates } from "@/lib/areas/diff";
 import { mentionsUasActivity } from "@/lib/areas/classify";
-import { parseTopSkyBuffer, parseTopSkyText } from "@/lib/areas/parse-topsky";
-import { encodeLatin1, mergeTempoSection } from "@/lib/areas/write-topsky";
+import { parseTopSkyBuffer } from "@/lib/areas/parse-topsky";
+import {
+  applyLabelEdits,
+  encodeLatin1,
+  mergeTempoSection,
+} from "@/lib/areas/write-topsky";
 import type {
   AmdtEntry,
   AreaRecord,
@@ -53,6 +57,9 @@ type SupViewer = {
 };
 
 type HoverKey = string | string[] | null;
+
+/** Dwell before opening SUP iframe — cancel if pointer leaves early. */
+const SUP_IFRAME_DWELL_MS = 400;
 
 function supViewerSrc(viewer: SupViewer): string {
   return (
@@ -113,17 +120,37 @@ export function Workspace() {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [supViewer, setSupViewer] = useState<SupViewer | null>(null);
+  const [labelPlacer, setLabelPlacer] = useState(false);
+  const supDwellTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const showSupViewer = useCallback(
+  const cancelSupDwell = useCallback(() => {
+    if (supDwellTimer.current) {
+      clearTimeout(supDwellTimer.current);
+      supDwellTimer.current = null;
+    }
+  }, []);
+
+  const scheduleSupViewer = useCallback(
     (folder: string | undefined, href: string | undefined, label: string) => {
+      cancelSupDwell();
       if (!folder || !href) return;
-      setSupViewer((prev) => {
-        if (prev && prev.folder === folder && prev.href === href) return prev;
-        return { folder, href, label };
-      });
+      // Already showing this SUP — keep it without re-delay flicker.
+      if (
+        supViewer &&
+        supViewer.folder === folder &&
+        supViewer.href === href
+      ) {
+        return;
+      }
+      supDwellTimer.current = setTimeout(() => {
+        setSupViewer({ folder, href, label });
+        supDwellTimer.current = null;
+      }, SUP_IFRAME_DWELL_MS);
     },
-    [],
+    [cancelSupDwell, supViewer],
   );
+
+  useEffect(() => () => cancelSupDwell(), [cancelSupDwell]);
 
   // When an area is selected from the map, scroll it into view in the list.
   useEffect(() => {
@@ -330,17 +357,29 @@ export function Workspace() {
     toast.success(`Accepted ${item.candidate.id}`);
   };
 
+  const onLabelMove = useCallback((fid: string, lat: number, lon: number) => {
+    setAreas((prev) =>
+      prev.map((a) => {
+        if (areaFeatureId(a) !== fid) return a;
+        // Never invent a LABEL for unlabeled baseline areas.
+        if (!a.label) return a;
+        return {
+          ...a,
+          label: { ...a.label, lat, lon },
+          labelEdited: true,
+        };
+      }),
+    );
+  }, []);
+
   const exportFile = () => {
     if (!rawText) {
       toast.error("Load a baseline first");
       return;
     }
-    // Refresh raw for topsky-preserved blocks from current parse of working set is tricky;
-    // merge using working areas + original text.
-    const merged = mergeTempoSection(rawText, areas);
-    // Keep encoding consistent — re-parse merge into latin1 download
-    const out = parseTopSkyText(merged, encoding);
-    void out;
+    // Tempo merge, then patch LABEL coords for nudged areas (never invents LABEL lines).
+    const merged = applyLabelEdits(mergeTempoSection(rawText, areas), areas);
+    const edited = areas.filter((a) => a.labelEdited).length;
     const buf = encodeLatin1(merged);
     const blob = new Blob([Uint8Array.from(buf)], {
       type: "text/plain;charset=ISO-8859-1",
@@ -351,7 +390,11 @@ export function Workspace() {
     a.download = "TopSkyAreas.txt";
     a.click();
     URL.revokeObjectURL(url);
-    toast.success("Exported TopSkyAreas.txt (Latin-1)");
+    toast.success(
+      edited
+        ? `Exported TopSkyAreas.txt (Latin-1) · ${edited} label(s) updated`
+        : "Exported TopSkyAreas.txt (Latin-1)",
+    );
   };
 
   const counts = useMemo(() => {
@@ -450,10 +493,11 @@ export function Workspace() {
                     <button
                       type="button"
                       className="font-medium text-sky-800 underline decoration-sky-300/80 underline-offset-2 hover:bg-sky-50"
-                      title="Hover to open SUP preview"
+                      title="Hover briefly to open SUP preview"
                       onMouseEnter={() =>
-                        showSupViewer(amdtId, s.href, `SUP ${s.number}`)
+                        scheduleSupViewer(amdtId, s.href, `SUP ${s.number}`)
                       }
+                      onMouseLeave={cancelSupDwell}
                     >
                       {s.number}
                     </button>{" "}
@@ -511,6 +555,8 @@ export function Workspace() {
             selectedKey={selectedKey}
             onHoverKey={setHoverKey}
             onSelectKey={setSelectedKey}
+            labelPlacer={labelPlacer}
+            onLabelMove={onLabelMove}
             layerVisibility={layerVisibility}
           />
           <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded-md bg-white/90 px-2 py-1 text-[11px] text-slate-600 shadow">
@@ -545,7 +591,49 @@ export function Workspace() {
 
         <aside className="flex min-h-0 flex-col gap-3 border-l border-slate-200/80 bg-white/70 p-3">
           <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Areas</p>
-          <div className="max-h-[42%] space-y-2 overflow-y-auto rounded-md border border-slate-200 bg-white px-2 py-2">
+          <div className="rounded-md border border-slate-200 bg-white px-2 py-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-slate-800">Label placer</p>
+                <p className="text-[10px] leading-snug text-slate-500">
+                  Drag existing LABELs on the map to reduce overlap. Unlabeled areas stay
+                  untouched.
+                </p>
+              </div>
+              <Checkbox
+                checked={labelPlacer}
+                onCheckedChange={(v) => setLabelPlacer(v === true)}
+                aria-label="Enable label placer"
+              />
+            </div>
+            {labelPlacer && (
+              <p className="mt-1.5 text-[10px] text-slate-500">
+                {areas.filter((a) => a.label && isLayerVisible(a, layerVisibility)).length}{" "}
+                labeled on visible layers
+                {areas.filter((a) => a.labelEdited).length
+                  ? ` · ${areas.filter((a) => a.labelEdited).length} moved`
+                  : ""}
+                {(() => {
+                  const sel = areas.find((a) => areaFeatureId(a) === selectedKey);
+                  if (!sel) return null;
+                  if (!sel.label) {
+                    return (
+                      <span className="mt-1 block text-amber-700">
+                        {sel.id}: no LABEL in file — left untouched
+                      </span>
+                    );
+                  }
+                  return (
+                    <span className="mt-1 block font-mono text-slate-600">
+                      {sel.id}: {sel.label.lat.toFixed(5)}, {sel.label.lon.toFixed(5)}
+                      {sel.labelEdited ? " · edited" : ""}
+                    </span>
+                  );
+                })()}
+              </p>
+            )}
+          </div>
+          <div className="max-h-[36%] space-y-2 overflow-y-auto rounded-md border border-slate-200 bg-white px-2 py-2">
             <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
               Map layers
             </p>
@@ -731,16 +819,17 @@ export function Workspace() {
                           }
                           title={
                             supHref
-                              ? "Hover to preview SUP here"
+                              ? "Hover briefly to open SUP preview"
                               : undefined
                           }
                           onMouseEnter={() =>
-                            showSupViewer(
+                            scheduleSupViewer(
                               supFolder,
                               supHref,
                               `SUP ${d.candidate.provenance.supNumber}`,
                             )
                           }
+                          onMouseLeave={cancelSupDwell}
                         >
                           SUP {d.candidate.provenance.supNumber}
                         </span>
