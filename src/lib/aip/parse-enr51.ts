@@ -97,8 +97,10 @@ export function parseEnr51Html(
 ): AreaRecord[] {
   const text = stripHtml(html);
   const section221Noaiw = extractEnr51Section221Designators(text);
+  // Name may include commas (e.g. ESR18A BOFORS, VILLINGSBERG). Without
+  // "," the whole block fails to match and orphan-diff falsely proposes remove.
   const re =
-    /\b(ES[RD]\d{1,4}[A-Z]?)\s+([A-ZÅÄÖ][A-Za-zÅÄÖåäö0-9][A-Za-zÅÄÖåäö0-9 /-]{0,60}?)\s*\n([\s\S]*?)(?=\n\s*ES[RDP]\d|\n\s*ENR\s+5\.|$)/gi;
+    /\b(ES[RD]\d{1,4}[A-Z]?)\s+([A-ZÅÄÖ][A-Za-zÅÄÖåäö0-9][A-Za-zÅÄÖåäö0-9 ,/-]{0,60}?)\s*\n([\s\S]*?)(?=\n\s*ES[RDP]\d|\n\s*ENR\s+5\.|$)/gi;
   const areas: AreaRecord[] = [];
   const seen = new Set<string>();
 

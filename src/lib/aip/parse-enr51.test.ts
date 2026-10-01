@@ -215,6 +215,40 @@ See para 3.1.1. Information about activity obtainable from STOCKHOLM ACC.
     expect(d171.section).toBe("other");
   });
 
+  it("parses ESR18A/B/C names that contain a comma (BOFORS, VILLINGSBERG)", () => {
+    const html = `
+<html><body>
+ESR18 BOFORS, VILLINGSBERG
+592853N 0150006E - 592734N 0150051E - 592418N 0145925E - 592106N 0145757E - 591741N 0145458E - 591512N 0144952E - 591335N 0143935E - 591704N 0143449E - 591937N 0143449E - 592853N 0150006E.
+FL 95
+GND
+Permission obtainable from STOCKHOLM ACC.
+ESR18A BOFORS, VILLINGSBERG
+A circle with radius 2 NM centred on 592500N 0144500E.
+FL 95
+GND
+Permission obtainable from STOCKHOLM ACC.
+ESR18B BOFORS, VILLINGSBERG
+A circle with radius 2 NM centred on 592600N 0144600E.
+FL 95
+GND
+Permission obtainable from STOCKHOLM ACC.
+ESR18C BOFORS, VILLINGSBERG
+A circle with radius 2 NM centred on 592700N 0144700E.
+FL 95
+GND
+Permission obtainable from STOCKHOLM ACC.
+</body></html>`;
+    const areas = parseEnr51Html(html, { amdtId: "test-amdt" });
+    const ids = areas.map((a) => a.id).sort();
+    expect(ids).toEqual(["ESR18", "ESR18A", "ESR18B", "ESR18C"]);
+    for (const id of ["ESR18", "ESR18A", "ESR18B", "ESR18C"]) {
+      const a = areas.find((x) => x.id === id)!;
+      expect(a.name).toContain("BOFORS");
+      expect(a.name).toContain("VILLINGSBERG");
+    }
+  });
+
   it("ESR94 Sörentorp is AREA:3 ACTIVE:1 with // NO LABEL (Max policy)", () => {
     const html = `
 <html><body>
