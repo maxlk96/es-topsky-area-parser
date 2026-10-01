@@ -12,7 +12,7 @@ import {
 } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { mapStyleFor } from "@/lib/areas/classify";
-import { closeRing } from "@/lib/areas/coords";
+import { ensureOuterRingCcw } from "@/lib/areas/coords";
 import {
   areaFeatureId,
   isLayerVisible,
@@ -82,10 +82,12 @@ function toFeatureCollection(areas: AreaRecord[], role: Role) {
       .filter((a) => a.coordinates.length >= 3)
       .map((a) => {
         const style = mapStyleFor(a);
+        // Candidates slightly lighter so overlapping multi-area SUP fills stay readable.
         const fillOpacity =
           role === "candidate"
-            ? 0.14
-            : Math.max(style.fillOpacity, a.areaTypeCode === "3" ? 0.12 : 0.32);
+            ? 0.18
+            : Math.max(style.fillOpacity, a.areaTypeCode === "3" ? 0.12 : 0.28);
+        const ring = ensureOuterRingCcw(a.coordinates);
         return {
           type: "Feature" as const,
           properties: {
@@ -102,7 +104,7 @@ function toFeatureCollection(areas: AreaRecord[], role: Role) {
           },
           geometry: {
             type: "Polygon" as const,
-            coordinates: [closeRing(a.coordinates)],
+            coordinates: [ring],
           },
         };
       }),

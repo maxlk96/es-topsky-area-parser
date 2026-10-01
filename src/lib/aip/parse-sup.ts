@@ -28,6 +28,215 @@ function stripHtml(html: string): string {
     .replace(/\n\s*\n+/g, "\n\n");
 }
 
+type AreaSection = {
+  id: string;
+  name: string;
+  chunk: string;
+  score: number;
+};
+
+/**
+ * Split a SUP body into per-designator geometry sections.
+ * Title lines that only name areas (no coords) are skipped; the later
+ * "ESR794 FAGERSANNA … coords …" blocks are kept. Prevents merging every
+ * polygon in a multi-area SUP into one self-intersecting fill.
+ */
+export function extractAreaSections(text: string): AreaSection[] {
+  const re =
+    /\b(ES[RD]\d{2,4}[A-Z]?)\s+([A-ZÅÄÖ][A-Za-zÅÄÖåäö0-9/-]{1,40})\b/gi;
+  const hits = [...text.matchAll(re)];
+  const found: AreaSection[] = [];
+  for (let i = 0; i < hits.length; i++) {
+    const id = hits[i][1].toUpperCase();
+    let name = hits[i][2].trim();
+    // Drop trailing "and" / "och" leftovers from bilingual titles
+    name = name.replace(/\s+(and|och)$/i, "").trim();
+    if (name.length < 2) continue;
+    const start = hits[i].index ?? 0;
+    const end = i + 1 < hits.length ? (hits[i + 1].index ?? text.length) : text.length;
+    const chunk = text.slice(start, end);
+    const coordCount = [
+      ...chunk.matchAll(/(\d{6,7}(?:\.\d+)?[NS]\s+\d{7,8}(?:\.\d+)?[EW])/gi),
+    ].length;
+    const hasCircle = /circle with radius/i.test(chunk);
+    if (coordCount < 3 && !hasCircle) continue;
+    found.push({
+      id,
+      name,
+      chunk,
+      score: coordCount + (hasCircle ? 10 : 0),
+    });
+  }
+  const byId = new Map<string, AreaSection>();
+  for (const f of found) {
+    const prev = byId.get(f.id);
+    if (!prev || f.score > prev.score) byId.set(f.id, f);
+  }
+  return [...byId.values()];
+}
+
+function parseCoordsFromChunk(chunk: string): [number, number][] {
+  const tokens = [
+    ...chunk.matchAll(/(\d{6,7}(?:\.\d+)?[NS]\s+\d{7,8}(?:\.\d+)?[EW])/gi),
+  ].map((m) => m[1]);
+  const coordinates: [number, number][] = [];
+  for (const tok of tokens) {
+    const c = parseCompactCoord(tok.replace(/\s+/g, " "));
+    if (c) coordinates.push([c.lon, c.lat]);
+  }
+  return closeRing(coordinates);
+}
+
+function parseCircleFromChunk(chunk: string): AreaRecord["boundCircle"] {
+  const circle = chunk.match(
+    /circle with radius\s+([\d.]+)\s*NM\s+centr(?:ed|ered)\s+on\s+(\d{6,7}[NS])\s+(\d{7,8}[EW])/i,
+  );
+  if (!circle) return undefined;
+  const c = parseCompactCoord(`${circle[2]} ${circle[3]}`);
+  const radiusNm = Number(circle[1]);
+  if (!c || Number.isNaN(radiusNm)) return undefined;
+  return { lat: c.lat, lon: c.lon, radiusNm };
+}
+
+function parseLimitsFromChunk(chunk: string, fallbackText: string): [number, number] | undefined {
+  const vertChunk =
+    chunk.match(/Vertical limits?([\s\S]{0,400})/i)?.[1] ??
+    chunk.match(/Gräns i höjdled([\s\S]{0,400})/i)?.[1] ??
+    chunk;
+  const vertTokens = [
+    ...vertChunk.matchAll(
+      /\b(FL\s*\d{1,3}|GND|SFC|UNL|\d{3,5}\s*ft(?:\s*AMSL)?)\b/gi,
+    ),
+  ].map((m) => m[1]);
+  let nums = vertTokens
+    .map(parseAipVerticalToken)
+    .filter((n): n is number => n != null);
+  if (nums.length < 1) {
+    const fb = [
+      ...fallbackText.matchAll(
+        /\b(FL\s*\d{1,3}|GND|SFC|UNL|\d{3,5}\s*ft(?:\s*AMSL)?)\b/gi,
+      ),
+    ].map((m) => parseAipVerticalToken(m[1]));
+    nums = fb.filter((n): n is number => n != null);
+  }
+  if (nums.length >= 2) return [Math.min(...nums), Math.max(...nums)];
+  if (nums.length === 1) return [0, nums[0]];
+  return undefined;
+}
+
+function buildAreaFromSection(
+  section: { id: string; name: string; chunk: string },
+  text: string,
+  meta: { amdtId?: string; supNumber?: string; href?: string },
+): AreaRecord | null {
+  const id = section.id.toUpperCase();
+  const shortName = shortFromDesignator(id);
+  const category = id.startsWith("ESD") ? "D" : "R";
+  const name = section.name.toUpperCase();
+
+  let coordinates = parseCoordsFromChunk(section.chunk);
+  const boundCircle = parseCircleFromChunk(section.chunk);
+  if (boundCircle && coordinates.length < 3) {
+    coordinates = densifyCircle(
+      boundCircle.lat,
+      boundCircle.lon,
+      boundCircle.radiusNm,
+      defaultSpacingForRadius(boundCircle.radiusNm),
+    );
+  }
+  if (coordinates.length < 3 && !boundCircle) return null;
+
+  const limits = parseLimitsFromChunk(section.chunk, text);
+  const remarks = text.slice(0, 4000);
+  const inferred = inferAreaTypeFromRemarks(remarks);
+  const flyingSup = /military aviation|aviation operations|flygverksamhet/i.test(
+    text,
+  );
+  const useAup = flyingSup || inferred.reason === "flying_or_ats_permission";
+
+  const validTo =
+    text.match(
+      /(?:to|–|-)\s*(\d{1,2}\s+[A-Z]{3}\s+\d{4})\s*(?:\d{4})?/i,
+    )?.[1] ||
+    text.match(/Valid to\s+(\d{1,2}\s+[A-Z]{3}\s+\d{4})/i)?.[1];
+  const validFrom = text.match(
+    /(\d{1,2}\s+[A-Z]{3}\s+\d{4})\s*(?:0000)?\s*(?:–|-|to)/i,
+  )?.[1];
+
+  let label: AreaRecord["label"];
+  if (coordinates.length >= 3) {
+    try {
+      const poly = polygon([coordinates]);
+      const c = centroid(poly);
+      label = {
+        lon: c.geometry.coordinates[0],
+        lat: c.geometry.coordinates[1],
+        text: name,
+      };
+    } catch {
+      /* ignore invalid rings for label */
+    }
+  } else if (boundCircle) {
+    label = {
+      lat: boundCircle.lat,
+      lon: boundCircle.lon,
+      text: name,
+    };
+  }
+
+  return {
+    id,
+    shortName,
+    name,
+    category,
+    areaTypeCode: inferred.areaTypeCode,
+    coordinates,
+    limits,
+    activation: useAup ? { type: "AUP", key: id } : { type: "MANUAL" },
+    directives: inferred.noaiw ? ["NOAIW"] : [],
+    label,
+    mapDefaultVisible: true,
+    noaiw: inferred.noaiw,
+    boundCircle,
+    provenance: {
+      source: "sup",
+      amdtId: meta.amdtId,
+      supNumber: meta.supNumber,
+      href: meta.href,
+      validFrom,
+      validTo,
+      rawComment: remarks.slice(0, 500),
+    },
+    rawBlock: "",
+    section: "tempo",
+  };
+}
+
+/** Fallback: single first designator + all coords in the document (legacy). */
+function parseSingleAreaFallback(
+  text: string,
+  meta: { amdtId?: string; supNumber?: string; href?: string },
+): AreaRecord[] {
+  const idMatch = text.match(/\b(ES[RD]\d{2,4}[A-Z]?)\b/);
+  if (!idMatch) return [];
+  const id = idMatch[1].toUpperCase();
+  let name = shortFromDesignator(id);
+  const title =
+    text.match(
+      new RegExp(
+        `(?:TEMPORARY\\s+(?:RESTRICTED|DANGER)\\s+AREA\\s*[-–]?\\s*${id}\\s+([A-ZÅÄÖ][A-ZÅÄÖa-zåäö0-9 /-]{1,40}))`,
+        "i",
+      ),
+    ) || text.match(new RegExp(`${id}\\s+([A-ZÅÄÖ][A-ZÅÄÖa-zåäö0-9 /-]{1,40})`));
+  if (title?.[1]) name = title[1].trim();
+  const area = buildAreaFromSection(
+    { id, name, chunk: text },
+    text,
+    meta,
+  );
+  return area ? [area] : [];
+}
+
 export function parseSupHtml(
   html: string,
   meta: { amdtId?: string; supNumber?: string; href?: string },
@@ -35,7 +244,6 @@ export function parseSupHtml(
   const text = stripHtml(html);
   const remarks = text.slice(0, 4000);
   if (isUasOnlyText(text) && !/military aviation/i.test(text)) {
-    // Still return a stub marked excluded for diff
     const idMatch = text.match(/\b(ES[RD]\d{2,4}[A-Z]?)\b/i);
     if (!idMatch) return [];
     const id = idMatch[1].toUpperCase();
@@ -64,145 +272,15 @@ export function parseSupHtml(
     ];
   }
 
-  const idMatch = text.match(/\b(ES[RD]\d{2,4}[A-Z]?)\b/);
-  if (!idMatch) return [];
-  const id = idMatch[1].toUpperCase();
-  const shortName = shortFromDesignator(id);
-  const category = id.startsWith("ESD") ? "D" : "R";
-
-  // Name: after designator on title line
-  let name = shortName;
-  const title =
-    text.match(
-      new RegExp(
-        `(?:TEMPORARY\\s+(?:RESTRICTED|DANGER)\\s+AREA\\s*[-–]?\\s*${id}\\s+([A-ZÅÄÖ][A-ZÅÄÖa-zåäö0-9 /-]{1,40}))`,
-        "i",
-      ),
-    ) ||
-    text.match(new RegExp(`${id}\\s+([A-ZÅÄÖ][A-ZÅÄÖa-zåäö0-9 /-]{1,40})`));
-  if (title?.[1]) name = title[1].trim().toUpperCase();
-
-  // Compact coords chain: 592437N 0201555E - ...
-  const coordTokens = [
-    ...text.matchAll(
-      /(\d{6,7}(?:\.\d+)?[NS]\s+\d{7,8}(?:\.\d+)?[EW])/gi,
-    ),
-  ].map((m) => m[1]);
-
-  let coordinates: [number, number][] = [];
-  for (const tok of coordTokens) {
-    const c = parseCompactCoord(tok.replace(/\s+/g, " "));
-    if (c) coordinates.push([c.lon, c.lat]);
-  }
-  coordinates = closeRing(coordinates);
-
-  // Circle: radius X NM centred on ...
-  let boundCircle: AreaRecord["boundCircle"];
-  const circle = text.match(
-    /circle with radius\s+([\d.]+)\s*NM\s+centr(?:ed|ered)\s+on\s+(\d{6,7}[NS])\s+(\d{7,8}[EW])/i,
-  );
-  if (circle) {
-    const c = parseCompactCoord(`${circle[2]} ${circle[3]}`);
-    const radiusNm = Number(circle[1]);
-    if (c && !Number.isNaN(radiusNm)) {
-      boundCircle = { lat: c.lat, lon: c.lon, radiusNm };
-      if (coordinates.length < 3) {
-        coordinates = densifyCircle(
-          c.lat,
-          c.lon,
-          radiusNm,
-          defaultSpacingForRadius(radiusNm),
-        );
-      }
+  const sections = extractAreaSections(text);
+  if (sections.length >= 1) {
+    const areas: AreaRecord[] = [];
+    for (const section of sections) {
+      const area = buildAreaFromSection(section, text, meta);
+      if (area) areas.push(area);
     }
+    if (areas.length) return areas;
   }
 
-  // Vertical limits — collect FL / ft / GND tokens near "Vertical"
-  const vertChunk =
-    text.match(/Vertical limits?([\s\S]{0,400})/i)?.[1] ??
-    text.match(/Gräns i höjdled([\s\S]{0,400})/i)?.[1] ??
-    text;
-  const vertTokens = [
-    ...vertChunk.matchAll(
-      /\b(FL\s*\d{1,3}|GND|SFC|UNL|\d{3,5}\s*ft(?:\s*AMSL)?)\b/gi,
-    ),
-  ].map((m) => m[1]);
-  const nums = vertTokens
-    .map(parseAipVerticalToken)
-    .filter((n): n is number => n != null);
-  let limits: [number, number] | undefined;
-  if (nums.length >= 2) {
-    limits = [Math.min(...nums), Math.max(...nums)];
-  } else if (nums.length === 1) {
-    limits = [0, nums[0]];
-  }
-
-  // Validity
-  const validTo =
-    text.match(
-      /(?:to|–|-)\s*(\d{1,2}\s+[A-Z]{3}\s+\d{4})\s*(?:\d{4})?/i,
-    )?.[1] ||
-    text.match(/Valid to\s+(\d{1,2}\s+[A-Z]{3}\s+\d{4})/i)?.[1];
-  const validFrom = text.match(
-    /(\d{1,2}\s+[A-Z]{3}\s+\d{4})\s*(?:0000)?\s*(?:–|-|to)/i,
-  )?.[1];
-
-  const inferred = inferAreaTypeFromRemarks(remarks);
-  const flyingSup = /military aviation|aviation operations|flygverksamhet/i.test(
-    text,
-  );
-
-  let label: AreaRecord["label"];
-  if (coordinates.length >= 3) {
-    try {
-      const poly = polygon([coordinates]);
-      const c = centroid(poly);
-      label = {
-        lon: c.geometry.coordinates[0],
-        lat: c.geometry.coordinates[1],
-        text: name.toUpperCase(),
-      };
-    } catch {
-      /* ignore */
-    }
-  } else if (boundCircle) {
-    label = {
-      lat: boundCircle.lat,
-      lon: boundCircle.lon,
-      text: name.toUpperCase(),
-    };
-  }
-
-  const useAup = flyingSup || inferred.reason === "flying_or_ats_permission";
-
-  const area: AreaRecord = {
-    id,
-    shortName,
-    name: name.toUpperCase(),
-    category,
-    areaTypeCode: inferred.areaTypeCode,
-    coordinates,
-    limits,
-    activation: useAup
-      ? { type: "AUP", key: id }
-      : { type: "MANUAL" },
-    directives: inferred.noaiw ? ["NOAIW"] : [],
-    label,
-    mapDefaultVisible: true,
-    noaiw: inferred.noaiw,
-    boundCircle,
-    provenance: {
-      source: "sup",
-      amdtId: meta.amdtId,
-      supNumber: meta.supNumber,
-      href: meta.href,
-      validFrom,
-      validTo,
-      rawComment: remarks.slice(0, 500),
-    },
-    rawBlock: "",
-    section: "tempo",
-  };
-
-  return [area];
+  return parseSingleAreaFallback(text, meta);
 }

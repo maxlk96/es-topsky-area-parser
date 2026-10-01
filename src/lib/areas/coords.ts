@@ -82,6 +82,27 @@ export function closeRing(coords: [number, number][]): [number, number][] {
   return [...coords, [fLon, fLat]];
 }
 
+/** Signed shoelace area (lon=x, lat=y). Positive ⇒ counter-clockwise. */
+export function ringSignedArea(ring: [number, number][]): number {
+  let sum = 0;
+  for (let i = 0; i < ring.length - 1; i++) {
+    sum += ring[i][0] * ring[i + 1][1] - ring[i + 1][0] * ring[i][1];
+  }
+  return sum / 2;
+}
+
+/**
+ * GeoJSON / MapLibre exterior rings should be counter-clockwise.
+ * Fixes odd fill artefacts when rings are clockwise or reversed.
+ */
+export function ensureOuterRingCcw(ring: [number, number][]): [number, number][] {
+  const closed = closeRing(ring);
+  if (closed.length < 4) return closed;
+  if (ringSignedArea(closed) >= 0) return closed;
+  const open = closed.slice(0, -1).reverse();
+  return closeRing(open);
+}
+
 /** Densify a full circle to lon/lat ring. Spacing in degrees (TopSky COORD_CIRCLE Spacing). */
 export function densifyCircle(
   lat: number,
