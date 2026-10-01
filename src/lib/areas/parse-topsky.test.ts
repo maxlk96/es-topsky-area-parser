@@ -247,7 +247,7 @@ N065.51.52.000 E021.25.27.000
     expect(deger.provenance.supNumber).toBe("146/26");
   });
 
-  it("excludes ESR111 (not in AIP) from the working set", () => {
+  it("keeps ESR111 in the working set so AIP reload can propose removal", () => {
     const text = `
 //ESR110 Huddinge
 AREA:3:  R110
@@ -278,8 +278,11 @@ N059.19.20.000 E017.52.30.000
 N059.20.26.000 E017.52.30.000
 `;
     const { areas } = parseTopSkyText(text);
-    expect(areas.find((a) => a.id === "ESR111")).toBeUndefined();
-    expect(areas.find((a) => a.shortName === "R111")).toBeUndefined();
-    expect(areas.map((a) => a.id).sort()).toEqual(["ESR110", "ESR112"]);
+    expect(areas.find((a) => a.id === "ESR111")?.name).toMatch(/SÖRENTORP/i);
+    expect(areas.map((a) => a.id).sort()).toEqual([
+      "ESR110",
+      "ESR111",
+      "ESR112",
+    ]);
   });
 });

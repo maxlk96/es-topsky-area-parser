@@ -138,10 +138,11 @@ export function areasEquivalent(existing: AreaRecord, candidate: AreaRecord): bo
 const DIFF_STATUS_ORDER: Record<string, number> = {
   changed: 0,
   new: 1,
-  excluded: 2,
-  expired: 3,
-  duplicate_of_sup: 4,
-  present: 5,
+  removed: 2,
+  excluded: 3,
+  expired: 4,
+  duplicate_of_sup: 5,
+  present: 6,
 };
 
 /** Coarse source groups for stacked verify/diff (AIP → SUP → PCA). */
@@ -156,8 +157,9 @@ const DIFF_SOURCE_ORDER: Record<string, number> = {
 };
 
 export function diffSourceGroupKey(
-  item: Pick<DiffItem, "candidate">,
+  item: Pick<DiffItem, "candidate" | "status">,
 ): string {
+  if (item.status === "removed") return "orphan_rd";
   const s = item.candidate.provenance?.source || "other";
   if (s === "enr51") return "enr51";
   if (s === "enr52") return "enr52";
@@ -176,6 +178,8 @@ export function diffSourceGroupLabel(key: string): string {
       return "AIP SUP";
     case "pca":
       return "PCA (echarts)";
+    case "orphan_rd":
+      return "Not in AIP (remove)";
     default:
       return key;
   }
@@ -187,6 +191,25 @@ export function diffSourceGroupLabel(key: string): string {
  */
 export function sortDiffItems(items: DiffItem[]): DiffItem[] {
   return [...items].sort((a, b) => {
+    // Removals (orphan R/D) group together after ENR / SUP / PCA.
+    const ga = diffSourceGroupKey(a);
+    const gb = diffSourceGroupKey(b);
+    const groupOrder = (g: string) =>
+      g === "enr51"
+        ? 0
+        : g === "enr52"
+          ? 1
+          : g === "sup"
+            ? 2
+            : g === "pca"
+              ? 3
+              : g === "orphan_rd"
+                ? 4
+                : 5;
+    const goa = groupOrder(ga);
+    const gob = groupOrder(gb);
+    if (goa !== gob) return goa - gob;
+
     const sa =
       DIFF_SOURCE_ORDER[a.candidate.provenance?.source || ""] ?? 9;
     const sb =

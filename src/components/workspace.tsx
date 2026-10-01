@@ -49,8 +49,16 @@ import {
   IFR_PLANNING_NOTE,
   isIfrPlanningOnlyArea,
 } from "@/lib/aip/ifr-planning";
+import {
+  findOrphanPermanentRd,
+  orphanRdDiffItems,
+} from "@/lib/aip/orphan-rd";
 import { isNotInAipArea } from "@/lib/aip/not-in-aip";
 import { activationLabel } from "@/lib/areas/activation";
+import {
+  buildExportChangelog,
+  formatExportChangelogText,
+} from "@/lib/areas/changelog";
 import {
   applyDesignatorPolicy,
   areaOmitsLabel,
@@ -61,7 +69,7 @@ import {
   defaultLabelPosition,
   labelForAccept,
 } from "@/lib/areas/default-label";
-import { upsertAreaInOrder } from "@/lib/areas/names";
+import { normalizeDesignator, upsertAreaInOrder } from "@/lib/areas/names";
 import { parseTopSkyBuffer } from "@/lib/areas/parse-topsky";
 import {
   applyAcceptedAreaBlocks,
@@ -72,6 +80,7 @@ import {
   patchLabelInBlock,
   patchNameInBlock,
   sanitizeExportedTopSkyText,
+  stripAreaBlocks,
   toTopSkyName,
 } from "@/lib/areas/write-topsky";
 import type {
@@ -149,10 +158,29 @@ function hoverIncludes(hoverKey: HoverKey, fid: string): boolean {
   return Array.isArray(hoverKey) ? hoverKey.includes(fid) : hoverKey === fid;
 }
 
+function downloadTextFile(
+  filename: string,
+  body: string | Uint8Array,
+  mime: string,
+) {
+  const blob = new Blob(
+    [body instanceof Uint8Array ? Uint8Array.from(body) : body],
+    { type: mime },
+  );
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export function Workspace() {
   const [baselineKind, setBaselineKind] = useState<BaselineKind>("github");
   const [rawText, setRawText] = useState("");
   const [areas, setAreas] = useState<AreaRecord[]>([]);
+  /** Snapshot of areas at last baseline load (GitHub/local) — for export changelog. */
+  const [baselineAreas, setBaselineAreas] = useState<AreaRecord[]>([]);
   const [encoding, setEncoding] = useState("latin1");
   const [loading, setLoading] = useState(false);
   const [layerVisibility, setLayerVisibility] = useState<LayerVisibility>(
@@ -324,6 +352,7 @@ export function Workspace() {
       const parsed = parseTopSkyBuffer(await res.arrayBuffer());
       setRawText(parsed.rawText);
       setAreas(parsed.areas);
+      setBaselineAreas(parsed.areas);
       setEncoding(parsed.encoding);
       setBaselineKind("github");
       setDiffs([]);
@@ -344,6 +373,7 @@ export function Workspace() {
       const parsed = parseTopSkyBuffer(await file.arrayBuffer());
       setRawText(parsed.rawText);
       setAreas(parsed.areas);
+      setBaselineAreas(parsed.areas);
       setEncoding(parsed.encoding);
       setBaselineKind("local");
       setDiffs([]);
@@ -527,15 +557,20 @@ export function Workspace() {
       if (keys) setCatalogueSupKeys(keys);
       const stale = dropStaleTempoFromWorking(areas, keys ?? catalogueSupKeys);
       setCandidates((prev) => mergeCandidateAreas(prev, drawable));
-      const items = sortDiffItems(
-        diffCandidates(stale.next, all),
+      const orphanItems = orphanRdDiffItems(
+        findOrphanPermanentRd(stale.next, all),
       );
+      const items = sortDiffItems([
+        ...diffCandidates(stale.next, all),
+        ...orphanItems,
+      ]);
       setDiffs((prev) => mergeDiffItems(prev, items));
       const nChanged = items.filter((i) => i.status === "changed").length;
       const nNew = items.filter((i) => i.status === "new").length;
       const nEx = items.filter((i) => i.status === "excluded").length;
+      const nRemoved = items.filter((i) => i.status === "removed").length;
       toast.success(
-        `AIP reload: ${nChanged} changed · ${nNew} new · ${nEx} excluded` +
+        `AIP reload: ${nChanged} changed · ${nNew} new · ${nRemoved} remove · ${nEx} excluded` +
           ` (ENR ${data.enr51Count} · SUPs ${data.supParsed})` +
           (data.skippedUasSubject
             ? ` · skipped ${data.skippedUasSubject} UAS subject`
@@ -635,7 +670,37 @@ export function Workspace() {
   };
 
   const acceptDiff = (item: DiffItem) => {
-    if (item.status !== "new" && item.status !== "changed") return;
+    if (
+      item.status !== "new" &&
+      item.status !== "changed" &&
+      item.status !== "removed"
+    ) {
+      return;
+    }
+    const dropId = normalizeDesignator(item.candidate.id);
+
+    if (item.status === "removed") {
+      setAreas((prev) =>
+        prev.filter((a) => normalizeDesignator(a.id) !== dropId),
+      );
+      setRawText((prev) =>
+        stripAreaBlocks(prev, [
+          {
+            id: item.candidate.id,
+            shortName: item.candidate.shortName,
+          },
+        ]),
+      );
+      setDiffs((d) =>
+        d.filter((x) => normalizeDesignator(x.candidate.id) !== dropId),
+      );
+      setCandidates((c) =>
+        c.filter((a) => normalizeDesignator(a.id) !== dropId),
+      );
+      toast.success(`Removed ${item.candidate.id} from working set`);
+      return;
+    }
+
     if (isNotInAipArea(item.candidate)) {
       toast.error(`${item.candidate.id}: not present in AIP — excluded`);
       return;
@@ -652,17 +717,16 @@ export function Workspace() {
     }
     setAreas((prev) => {
       const existing = prev.find(
-        (a) => a.id.toUpperCase() === item.candidate.id.toUpperCase(),
+        (a) => normalizeDesignator(a.id) === dropId,
       );
       const accepted = buildAcceptedArea(item.candidate, existing);
       return upsertAreaInOrder(prev, accepted);
     });
-    const dropId = item.candidate.id.toUpperCase();
     setDiffs((d) =>
-      d.filter((x) => x.candidate.id.toUpperCase() !== dropId),
+      d.filter((x) => normalizeDesignator(x.candidate.id) !== dropId),
     );
     setCandidates((c) =>
-      c.filter((a) => a.id.toUpperCase() !== dropId),
+      c.filter((a) => normalizeDesignator(a.id) !== dropId),
     );
     toast.success(`Accepted ${item.candidate.id}`);
   };
@@ -697,30 +761,50 @@ export function Workspace() {
   };
 
   const acceptAllDiffs = () => {
+    const removals = diffs.filter((d) => d.status === "removed");
     const acceptable = diffs.filter(
       (d) =>
         (d.status === "new" || d.status === "changed") &&
         d.candidate.needsReview !== "missing_name" &&
-        !isIfrPlanningOnlyArea(d.candidate),
+        !isIfrPlanningOnlyArea(d.candidate) &&
+        !isNotInAipArea(d.candidate),
     );
     const skippedMissingName = diffs.filter(
       (d) =>
         (d.status === "new" || d.status === "changed") &&
         d.candidate.needsReview === "missing_name",
     ).length;
-    if (!acceptable.length) {
+    if (!acceptable.length && !removals.length) {
       toast.message(
         skippedMissingName
           ? `${skippedMissingName} area(s) need an AIP name (Rename) before Accept all`
-          : "No new/changed candidates to accept",
+          : "No new/changed/remove candidates to accept",
       );
       return;
     }
+    if (removals.length) {
+      setRawText((prev) =>
+        stripAreaBlocks(
+          prev,
+          removals.map((d) => ({
+            id: d.candidate.id,
+            shortName: d.candidate.shortName,
+          })),
+        ),
+      );
+    }
+    const removeIds = new Set(
+      removals.map((d) => normalizeDesignator(d.candidate.id)),
+    );
     setAreas((prev) => {
-      let next = prev;
+      let next = prev.filter(
+        (a) => !removeIds.has(normalizeDesignator(a.id)),
+      );
       for (const item of acceptable) {
         const existing = next.find(
-          (a) => a.id.toUpperCase() === item.candidate.id.toUpperCase(),
+          (a) =>
+            normalizeDesignator(a.id) ===
+            normalizeDesignator(item.candidate.id),
         );
         const accepted = buildAcceptedArea(item.candidate, existing);
         next = upsertAreaInOrder(next, accepted);
@@ -728,19 +812,22 @@ export function Workspace() {
       return next;
     });
     const acceptedIds = new Set(
-      acceptable.map((d) => d.candidate.id.toUpperCase()),
+      [...acceptable, ...removals].map((d) =>
+        normalizeDesignator(d.candidate.id),
+      ),
     );
     setDiffs((d) =>
-      d.filter((x) => !acceptedIds.has(x.candidate.id.toUpperCase())),
+      d.filter((x) => !acceptedIds.has(normalizeDesignator(x.candidate.id))),
     );
     setCandidates((c) =>
-      c.filter((a) => !acceptedIds.has(a.id.toUpperCase())),
+      c.filter((a) => !acceptedIds.has(normalizeDesignator(a.id))),
     );
-    toast.success(
-      skippedMissingName
-        ? `Accepted ${acceptable.length} · skipped ${skippedMissingName} missing name`
-        : `Accepted ${acceptable.length} area(s)`,
-    );
+    const bits = [
+      acceptable.length ? `accepted ${acceptable.length}` : "",
+      removals.length ? `removed ${removals.length}` : "",
+      skippedMissingName ? `skipped ${skippedMissingName} missing name` : "",
+    ].filter(Boolean);
+    toast.success(bits.join(" · ") || "Done");
   };
 
   const onLabelMove = useCallback((fid: string, lat: number, lon: number) => {
@@ -878,11 +965,21 @@ export function Workspace() {
         )
         .map((d) => d.candidate),
     ];
+    // Drop any baseline blocks no longer in the working set (Accept-removed).
+    const exportIds = new Set(
+      exportAreas.map((a) => normalizeDesignator(a.id)),
+    );
+    const removedBlocks = baselineAreas.filter(
+      (a) => !exportIds.has(normalizeDesignator(a.id)),
+    );
+    const baseText = removedBlocks.length
+      ? stripAreaBlocks(rawText, removedBlocks)
+      : rawText;
     const merged = sanitizeExportedTopSkyText(
       applyNameEdits(
         applyLabelEdits(
           applyAcceptedAreaBlocks(
-            mergeTempoSection(rawText, exportAreas, {
+            mergeTempoSection(baseText, exportAreas, {
               excludedStubs,
               now,
               catalogueKeys: catalogueSupKeys,
@@ -904,24 +1001,42 @@ export function Workspace() {
         (a.provenance.source === "enr51" || a.provenance.source === "sup"),
     ).length;
     const buf = encodeLatin1(merged);
-    const blob = new Blob([Uint8Array.from(buf)], {
-      type: "text/plain;charset=ISO-8859-1",
+    downloadTextFile(
+      "TopSkyAreas.txt",
+      buf,
+      "text/plain;charset=ISO-8859-1",
+    );
+
+    const changelog = buildExportChangelog(baselineAreas, exportAreas);
+    const changelogText = formatExportChangelogText(changelog, {
+      baselineKind:
+        baselineKind === "github" ? "GitHub main" : "Local file",
+      generatedAt: now,
     });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "TopSkyAreas.txt";
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadTextFile(
+      "TopSkyAreas-changelog.txt",
+      changelogText,
+      "text/plain;charset=utf-8",
+    );
+
     const bits: string[] = [];
     if (rewritten) bits.push(`${rewritten} AIP block(s)`);
     if (renamed) bits.push(`${renamed} renamed`);
     if (moved) bits.push(`${moved} label(s) moved`);
     if (staleHits.length) bits.push(`${staleHits.length} stale tempo dropped`);
+    const nLog =
+      changelog.new.length +
+      changelog.changed.length +
+      changelog.removed.length;
+    if (nLog) {
+      bits.push(
+        `changelog +${changelog.new.length}/~${changelog.changed.length}/-${changelog.removed.length}`,
+      );
+    }
     toast.success(
       bits.length
-        ? `Exported TopSkyAreas.txt (Latin-1) · ${bits.join(" · ")}`
-        : "Exported TopSkyAreas.txt (Latin-1)",
+        ? `Exported TopSkyAreas.txt + changelog · ${bits.join(" · ")}`
+        : "Exported TopSkyAreas.txt + changelog",
     );
   };
 
@@ -957,7 +1072,13 @@ export function Workspace() {
               onChange={(e) => onLocalFile(e.target.files?.[0] ?? null)}
             />
           </Label>
-          <Button size="sm" variant="secondary" onClick={exportFile} disabled={!areas.length}>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={exportFile}
+            disabled={!areas.length}
+            title="Downloads TopSkyAreas.txt (Latin-1) and TopSkyAreas-changelog.txt"
+          >
             Export
           </Button>
         </div>
@@ -1672,11 +1793,14 @@ export function Workspace() {
                   className="h-7 px-2 text-xs"
                   disabled={
                     !diffs.some(
-                      (d) => d.status === "new" || d.status === "changed",
+                      (d) =>
+                        d.status === "new" ||
+                        d.status === "changed" ||
+                        d.status === "removed",
                     )
                   }
                   onClick={acceptAllDiffs}
-                  title="Accept all new and changed candidates"
+                  title="Accept all new, changed, and remove candidates"
                 >
                   Accept all
                 </Button>
@@ -1684,7 +1808,16 @@ export function Workspace() {
             </div>
             {diffs.length > 0 && (
               <p className="text-[11px] text-slate-500">
-                {(["changed", "new", "excluded", "present", "expired"] as const)
+                {(
+                  [
+                    "changed",
+                    "new",
+                    "removed",
+                    "excluded",
+                    "present",
+                    "expired",
+                  ] as const
+                )
                   .map((s) => {
                     const n = diffs.filter((d) => d.status === s).length;
                     return n ? `${n} ${s}` : null;
@@ -1744,7 +1877,9 @@ export function Workspace() {
                           ? "default"
                           : d.status === "changed"
                             ? "secondary"
-                            : "outline"
+                            : d.status === "removed"
+                              ? "destructive"
+                              : "outline"
                       }
                     >
                       {d.status}
@@ -1810,20 +1945,26 @@ export function Workspace() {
                       className={
                         d.status === "changed" || d.status === "new"
                           ? "text-[11px] font-medium text-amber-800"
-                          : d.status === "excluded"
-                            ? "text-[11px] text-slate-500"
-                            : "text-[11px] text-slate-400"
+                          : d.status === "removed"
+                            ? "text-[11px] font-medium text-red-800"
+                            : d.status === "excluded"
+                              ? "text-[11px] text-slate-500"
+                              : "text-[11px] text-slate-400"
                       }
                       title={d.notes.join(" · ")}
                     >
-                      {(d.status === "changed" || d.status === "new"
+                      {(d.status === "changed" ||
+                      d.status === "new" ||
+                      d.status === "removed"
                         ? "Why: "
                         : "") + d.notes.join(" · ")}
                     </p>
                   )}
-                  {(d.status === "new" || d.status === "changed") && (
+                  {(d.status === "new" ||
+                    d.status === "changed" ||
+                    d.status === "removed") && (
                     <Button size="sm" variant="outline" onClick={() => acceptDiff(d)}>
-                      Accept
+                      {d.status === "removed" ? "Remove" : "Accept"}
                     </Button>
                   )}
                   </div>

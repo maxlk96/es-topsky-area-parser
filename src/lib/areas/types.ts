@@ -75,7 +75,9 @@ export type DiffStatus =
   | "present"
   | "duplicate_of_sup"
   | "expired"
-  | "excluded";
+  | "excluded"
+  /** Permanent TopSky R/D absent from AIP ENR 5.1/5.2 — Accept removes. */
+  | "removed";
 
 export interface DiffItem {
   status: DiffStatus;

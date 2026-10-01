@@ -92,7 +92,7 @@ export function applyNameEdits(fileText: string, areas: AreaRecord[]): string {
   return text;
 }
 
-function findAreaBlock(
+export function findAreaBlock(
   text: string,
   area: AreaRecord,
 ): { start: number; block: string } | null {
@@ -593,31 +593,44 @@ function sanitizeCoordBearingLine(line: string): string {
   return line;
 }
 
+/** Remove one area block (header + body) from a TopSky file string. */
+export function stripAreaBlock(
+  text: string,
+  area: Pick<AreaRecord, "id" | "shortName">,
+): string {
+  let out = text.replace(/\r\n/g, "\n");
+  const found = findAreaBlock(out, area as AreaRecord);
+  if (!found) return out;
+  const before = out.slice(0, found.start);
+  let after = out.slice(found.start + found.block.length);
+  after = after.replace(/^\n{1,3}/, "\n");
+  return before.replace(/\n{3,}$/, "\n\n") + after;
+}
+
+/** Strip many designators (Accept-removed / not-in-AIP hard list). */
+export function stripAreaBlocks(
+  text: string,
+  areas: Pick<AreaRecord, "id" | "shortName">[],
+): string {
+  let out = text.replace(/\r\n/g, "\n");
+  for (const area of areas) {
+    out = stripAreaBlock(out, area);
+  }
+  return out;
+}
+
 /**
  * Remove blocks for designators that must not appear in TopSky (e.g. ESR111).
- * Runs on export so baseline raw text cannot leak excluded areas.
+ * Hard safety net; general orphan removals also strip via Accept / exportAreas.
  */
 export function stripNotInAipBlocks(text: string): string {
-  let out = text.replace(/\r\n/g, "\n");
-  for (const id of NOT_IN_AIP_DESIGNATORS) {
-    const short = shortFromDesignator(id);
-    const found = findAreaBlock(out, {
+  return stripAreaBlocks(
+    text,
+    NOT_IN_AIP_DESIGNATORS.map((id) => ({
       id,
-      shortName: short,
-    } as AreaRecord);
-    if (!found) continue;
-    const before = out.slice(0, found.start);
-    let after = out.slice(found.start + found.block.length);
-    // Drop one leading blank run left by the removed block.
-    after = after.replace(/^\n{1,3}/, "\n");
-    out = before.replace(/\n{3,}$/, "\n\n") + after;
-  }
-  // Also drop orphan AREA lines if header was missing.
-  out = out.replace(
-    /(?:^|\n)(?:\/\/ESR111[^\n]*\n)?(?:\/\/)?AREA:[^:\n]+:\s*R111\s*\n(?:(?!\/\/ES[A-Z0-9]|\/{10,})[^\n]*\n)*/gi,
-    "\n",
+      shortName: shortFromDesignator(id),
+    })),
   );
-  return out;
 }
 
 /**

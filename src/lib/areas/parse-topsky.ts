@@ -1,4 +1,3 @@
-import { isNotInAipDesignator } from "@/lib/aip/not-in-aip";
 import {
   applyDesignatorPolicy,
   areaOmitsLabel,
@@ -71,12 +70,8 @@ export function parseTopSkyText(text: string, encoding = "latin1"): ParseResult 
       inTempo ? "tempo" : "other",
     );
     const id = designatorFromShort(cur.shortName);
-    // Max: R111 etc. not in AIP — never enter the working set.
-    if (isNotInAipDesignator(id) || isNotInAipDesignator(cur.shortName)) {
-      cur = null;
-      pendingComments = [];
-      return;
-    }
+    // Orphans (e.g. ESR111) stay in the working set so Reload AIP → Diff can
+    // propose removal; export hard-strips the not-in-AIP list as a safety net.
     const uasBlob = `${cur.commentName ?? ""} ${cur.shortName} ${id}`;
     const uasOnly = isUasOnlyText(uasBlob);
     const mapDefaultVisible = uasOnly ? false : defaultVisible;
