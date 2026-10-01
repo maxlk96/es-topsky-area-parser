@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { AreaRecord } from "./types";
 import {
+  extractHoursSection,
   isExpired,
   isUpcoming,
+  isWithinAnyWindow,
+  parseAllValidityWindows,
   parseLooseDate,
   parseValidityWindow,
 } from "./validity";
@@ -11,6 +14,7 @@ function area(
   validFrom?: string,
   validTo?: string,
   supNumber = "191/2026",
+  validityWindows?: { from: string; to: string }[],
 ): AreaRecord {
   return {
     id: "ESR794",
@@ -27,6 +31,7 @@ function area(
       supNumber,
       validFrom,
       validTo,
+      validityWindows,
     },
     rawBlock: "",
     section: "tempo",
@@ -83,6 +88,54 @@ describe("parseValidityWindow", () => {
     const a = area(w.validFrom, w.validTo, "189/2026");
     expect(isExpired(a, now)).toBe(false);
     expect(isUpcoming(a, now)).toBe(true);
+  });
+
+  it("SUP 83/2026: multi-period Hours span — not expired on 01 OCT", () => {
+    const now = new Date("2026-10-01T12:00:00Z");
+    const full = `
+AIP SUP 83/2026
+16 APR 2026
+Replaces AIP SUP 56/2026. Updated hours 28 APR - 01 MAY.
+ESR534 BRUNNA
+Tider / Hours
+30 MAR – 27 APR, MON – FRI 0600 – 1730
+28 APR 0600 – 01 MAY 2200
+04 MAY – 23 OCT, MON – FRI 0600 – 1730
+26 OCT – 25 DEC, MON – FRI 0700 – 1830
+28 – 31 DEC 0700 – 1830
+– S L U T / E N D –
+`;
+    const hours = extractHoursSection(full);
+    expect(hours).toBeTruthy();
+    const parts = parseAllValidityWindows(hours!, 2026);
+    expect(parts.length).toBeGreaterThanOrEqual(4);
+    expect(parts[0].validFrom).toMatch(/30 MAR 2026/);
+    expect(parts[parts.length - 1].validTo).toMatch(/31 DEC 2026/);
+
+    const w = parseValidityWindow("ESR534 BRUNNA", full, { supNumber: "83/2026" });
+    // Must NOT latch onto only 28 APR – 01 MAY from preamble or mid Hours line
+    expect(w.validFrom).toMatch(/30 MAR 2026/);
+    expect(w.validTo).toMatch(/31 DEC 2026/);
+    expect(w.windows?.length).toBeGreaterThanOrEqual(4);
+
+    const a = area(
+      w.validFrom,
+      w.validTo,
+      "83/2026",
+      w.windows?.map((x) => ({
+        from: x.validFrom,
+        to: x.validTo,
+      })),
+    );
+    expect(isExpired(a, now)).toBe(false);
+    expect(isUpcoming(a, now)).toBe(false);
+    expect(isWithinAnyWindow(a, now)).toBe(true);
+
+    // After last window
+    expect(isExpired(a, new Date("2027-01-01T12:00:00Z"))).toBe(true);
+    // Before first window
+    expect(isExpired(a, new Date("2026-03-01T12:00:00Z"))).toBe(false);
+    expect(isUpcoming(a, new Date("2026-03-01T12:00:00Z"))).toBe(true);
   });
 });
 

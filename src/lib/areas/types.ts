@@ -25,6 +25,8 @@ export interface AreaProvenance {
   href?: string;
   validFrom?: string;
   validTo?: string;
+  /** Individual Hours/period windows when the SUP has several (overall span is validFrom/validTo). */
+  validityWindows?: { from: string; to: string }[];
   rawComment?: string;
   notamId?: string;
 }

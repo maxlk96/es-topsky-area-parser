@@ -200,6 +200,10 @@ function buildAreaFromSection(
       href: meta.href,
       validFrom: validity.validFrom,
       validTo: validity.validTo,
+      validityWindows: validity.windows?.map((w) => ({
+        from: w.validFrom,
+        to: w.validTo,
+      })),
       rawComment: remarks.slice(0, 500),
     },
     rawBlock: "",
