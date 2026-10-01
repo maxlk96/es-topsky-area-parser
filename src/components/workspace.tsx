@@ -875,12 +875,19 @@ export function Workspace() {
       </header>
 
       <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[320px_1fr_340px]">
-        <aside className="flex min-h-0 flex-col gap-3 border-r border-slate-200/80 bg-white/70 p-3">
-          <div className="space-y-2">
-            <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-              AIP AMDT / SUPs
+        <aside className="flex min-h-0 flex-col gap-2 border-r border-slate-200/80 bg-white/70 p-3">
+          {/* Shared AMDT context for AIP SUP + AIP ENR */}
+          <div className="space-y-1.5 rounded-md border border-slate-200 bg-slate-50/80 px-2 py-2">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
+              AMDT
             </p>
-            <Button size="sm" variant="outline" className="w-full" onClick={loadAmdts} disabled={loading}>
+            <Button
+              size="sm"
+              variant="outline"
+              className="w-full"
+              onClick={loadAmdts}
+              disabled={loading}
+            >
               Fetch AMDT list
             </Button>
             <select
@@ -920,24 +927,135 @@ export function Workspace() {
                           </span>
                         </>
                       ) : null}
-                      {sel.publicationDate ? (
-                        <span className="text-slate-400">
-                          {" "}
-                          · pub. {sel.publicationDate}
-                        </span>
-                      ) : null}
                     </>
                   );
                 })()}
               </p>
             ) : null}
-            <Button size="sm" className="w-full" onClick={scanSups} disabled={!amdtId || loading}>
-              Scan SUPs for areas
-            </Button>
+          </div>
+
+          {/* Pipeline 1 — AIP SUP */}
+          <div className="flex min-h-0 flex-1 flex-col gap-1.5 rounded-md border border-sky-200/80 bg-sky-50/40 px-2 py-2">
+            <div className="shrink-0 space-y-1">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-sky-800">
+                AIP SUP
+              </p>
+              <p className="text-[10px] leading-snug text-slate-500">
+                Tempo supplements — scan catalogue, parse selected → Verify/diff
+              </p>
+              <Button
+                size="sm"
+                className="w-full"
+                onClick={scanSups}
+                disabled={!amdtId || loading}
+              >
+                Scan SUPs for areas
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                className="w-full"
+                onClick={parseSelected}
+                disabled={!sups.length || loading}
+              >
+                Parse selected → diff
+              </Button>
+            </div>
+            <ScrollArea className="min-h-0 flex-1 rounded border border-sky-100/80 bg-white/80">
+              <div className="space-y-2 p-1.5 pr-2">
+                {[...sups]
+                  .filter((s) => s.likelyArea)
+                  .sort((a, b) => {
+                    const [ay, an] = (() => {
+                      const [y, n] = supNumberKey(a.number);
+                      return [y > 0 && y < 100 ? 2000 + y : y, n] as const;
+                    })();
+                    const [by, bn] = (() => {
+                      const [y, n] = supNumberKey(b.number);
+                      return [y > 0 && y < 100 ? 2000 + y : y, n] as const;
+                    })();
+                    if (by !== ay) return by - ay;
+                    return bn - an;
+                  })
+                  .map((s) => (
+                    <div
+                      key={s.href}
+                      className={`flex items-start gap-2 rounded-md border border-transparent px-1 py-1 hover:border-slate-200 hover:bg-white ${
+                        supViewer?.href === s.href
+                          ? "border-sky-200 bg-sky-50/80"
+                          : ""
+                      }`}
+                    >
+                      <Checkbox
+                        className="mt-0.5"
+                        checked={!!selectedSups[s.href]}
+                        onCheckedChange={(v) =>
+                          setSelectedSups((prev) => ({
+                            ...prev,
+                            [s.href]: !!v,
+                          }))
+                        }
+                        aria-label={`Select SUP ${s.number}`}
+                      />
+                      <div className="min-w-0 flex-1 text-xs leading-snug">
+                        <button
+                          type="button"
+                          className="font-medium text-sky-800 underline decoration-sky-300/80 underline-offset-2 hover:bg-sky-50"
+                          title="Hover briefly to open SUP preview"
+                          onMouseEnter={() =>
+                            scheduleSupViewer(
+                              amdtId,
+                              s.href,
+                              `SUP ${s.number}`,
+                            )
+                          }
+                          onMouseLeave={cancelSupDwell}
+                        >
+                          {s.number}
+                        </button>{" "}
+                        <span
+                          className="cursor-default text-slate-600 hover:bg-amber-50 hover:text-slate-800"
+                          title="Hover to highlight related area(s) on the map"
+                          onMouseEnter={() => {
+                            const related = areasForCatalogueSup(
+                              s,
+                              areas,
+                              candidates,
+                            );
+                            if (!related.length) {
+                              setHoverKey(null);
+                              return;
+                            }
+                            setHoverKey(related.map(areaFeatureId));
+                          }}
+                          onMouseLeave={() => setHoverKey(null)}
+                        >
+                          {s.subject.slice(0, 90)}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                {!sups.length && (
+                  <p className="px-1 py-2 text-xs text-slate-500">
+                    Scan SUPs to list temporary R/D candidates.
+                  </p>
+                )}
+              </div>
+            </ScrollArea>
+          </div>
+
+          {/* Pipeline 2 — AIP ENR */}
+          <div className="shrink-0 space-y-1.5 rounded-md border border-emerald-200/80 bg-emerald-50/40 px-2 py-2">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-900">
+              AIP
+            </p>
+            <p className="text-[10px] leading-snug text-slate-500">
+              ENR 5.1 published R/D (+ area SUPs from AMDT) → Verify/diff
+            </p>
             <Button
               size="sm"
               variant="default"
-              className="w-full"
+              className="w-full bg-emerald-700 hover:bg-emerald-800"
               onClick={reloadFromAip}
               disabled={!amdtId || !areas.length || loading}
               title="ENR 5.1 published R/D + likely tempo SUPs → diff vs loaded TopSky baseline"
@@ -945,13 +1063,22 @@ export function Workspace() {
               Reload from AIP → diff
             </Button>
             <p className="text-[10px] leading-snug text-slate-500">
-              Reloads ENR 5.1 + area SUPs into Verify/diff (accumulates with PCA/SUP).
-              Does not wipe OTHER / unlabeled blocks. Accept is still per-row.
+              Accumulates in Verify/diff. Does not wipe OTHER / unlabeled blocks.
+            </p>
+          </div>
+
+          {/* Pipeline 3 — PCA */}
+          <div className="shrink-0 space-y-1.5 rounded-md border border-amber-200/80 bg-amber-50/40 px-2 py-2">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-900">
+              PCA
+            </p>
+            <p className="text-[10px] leading-snug text-slate-500">
+              vatiris echarts EXEA/EXES — not AIP SUP / ENR
             </p>
             <Button
               size="sm"
               variant="outline"
-              className="w-full"
+              className="w-full border-amber-300 bg-white hover:bg-amber-50"
               onClick={reloadPcaFromEcharts}
               disabled={!areas.length || loading}
               title="vatiris echarts EXEA/EXES → diff; Accept keeps existing LABEL positions"
@@ -959,97 +1086,11 @@ export function Workspace() {
               Reload PCA (echarts) → diff
             </Button>
             <p className="text-[10px] leading-snug text-slate-500">
-              Reparse PCA + sub-parts from vatiris echarts (accumulates in Verify/diff).
-              Accept updates geometry; LABEL coordinates stay where they are.
+              Accumulates in Verify/diff. Accept keeps existing LABEL positions.
             </p>
-            <Button
-              size="sm"
-              variant="secondary"
-              className="w-full"
-              onClick={parseSelected}
-              disabled={!sups.length || loading}
-            >
-              Parse selected → diff
-            </Button>
           </div>
-          <Separator />
-          <ScrollArea className="min-h-0 flex-1">
-            <div className="space-y-2 pr-2">
-              {[...sups]
-                .filter((s) => s.likelyArea)
-                .sort((a, b) => {
-                  // SUP number only — not selected/excluded vs included.
-                  const [ay, an] = (() => {
-                    const [y, n] = supNumberKey(a.number);
-                    return [y > 0 && y < 100 ? 2000 + y : y, n] as const;
-                  })();
-                  const [by, bn] = (() => {
-                    const [y, n] = supNumberKey(b.number);
-                    return [y > 0 && y < 100 ? 2000 + y : y, n] as const;
-                  })();
-                  if (by !== ay) return by - ay;
-                  return bn - an;
-                })
-                .map((s) => (
-                <div
-                  key={s.href}
-                  className={`flex items-start gap-2 rounded-md border border-transparent px-1 py-1 hover:border-slate-200 hover:bg-white ${
-                    supViewer?.href === s.href
-                      ? "border-sky-200 bg-sky-50/80"
-                      : ""
-                  }`}
-                >
-                  <Checkbox
-                    className="mt-0.5"
-                    checked={!!selectedSups[s.href]}
-                    onCheckedChange={(v) =>
-                      setSelectedSups((prev) => ({ ...prev, [s.href]: !!v }))
-                    }
-                    aria-label={`Select SUP ${s.number}`}
-                  />
-                  <div className="min-w-0 flex-1 text-xs leading-snug">
-                    <button
-                      type="button"
-                      className="font-medium text-sky-800 underline decoration-sky-300/80 underline-offset-2 hover:bg-sky-50"
-                      title="Hover briefly to open SUP preview"
-                      onMouseEnter={() =>
-                        scheduleSupViewer(amdtId, s.href, `SUP ${s.number}`)
-                      }
-                      onMouseLeave={cancelSupDwell}
-                    >
-                      {s.number}
-                    </button>{" "}
-                    <span
-                      className="cursor-default text-slate-600 hover:bg-amber-50 hover:text-slate-800"
-                      title="Hover to highlight related area(s) on the map"
-                      onMouseEnter={() => {
-                        const related = areasForCatalogueSup(
-                          s,
-                          areas,
-                          candidates,
-                        );
-                        // Highlight only — do not autopan on hover.
-                        if (!related.length) {
-                          setHoverKey(null);
-                          return;
-                        }
-                        setHoverKey(related.map(areaFeatureId));
-                      }}
-                      onMouseLeave={() => setHoverKey(null)}
-                    >
-                      {s.subject.slice(0, 90)}
-                    </span>
-                  </div>
-                </div>
-              ))}
-              {!sups.length && (
-                <p className="text-xs text-slate-500">
-                  Load an AMDT and scan SUPs to list temporary R/D candidates.
-                </p>
-              )}
-            </div>
-          </ScrollArea>
-          <div className="flex flex-wrap gap-1 text-[11px] text-slate-500">
+
+          <div className="flex shrink-0 flex-wrap gap-1 text-[11px] text-slate-500">
             <Badge variant="secondary">tempo {counts.tempo}</Badge>
             <Badge variant="secondary">R {counts.R}</Badge>
             <Badge variant="secondary">D {counts.D}</Badge>
