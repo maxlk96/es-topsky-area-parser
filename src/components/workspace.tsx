@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 const AreaMap = dynamic(
@@ -22,7 +22,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { amdtSupUrl } from "@/lib/aip/amdt";
 import { subjectLooksUas } from "@/lib/aip/sup-catalogue";
 import { diffCandidates } from "@/lib/areas/diff";
 import { parseTopSkyBuffer, parseTopSkyText } from "@/lib/areas/parse-topsky";
@@ -44,7 +43,21 @@ import {
   type LayerKey,
   type LayerVisibility,
 } from "@/lib/areas/map-layers";
+
 type BaselineKind = "github" | "local";
+
+type SupViewer = {
+  folder: string;
+  href: string;
+  label: string;
+};
+
+function supViewerSrc(viewer: SupViewer): string {
+  return (
+    `/api/amdt/${encodeURIComponent(viewer.folder)}/sup/html` +
+    `?path=${encodeURIComponent(viewer.href)}`
+  );
+}
 
 export function Workspace() {
   const [baselineKind, setBaselineKind] = useState<BaselineKind>("github");
@@ -59,24 +72,15 @@ export function Workspace() {
   const [hoverKey, setHoverKey] = useState<string | null>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
-  /** Last SUP opened via hover — reset on mouse leave so re-hover can open again. */
-  const supHoverOpened = useRef<string | null>(null);
+  const [supViewer, setSupViewer] = useState<SupViewer | null>(null);
 
-  const openSupOnHover = useCallback(
-    (folder: string | undefined, href: string | undefined) => {
+  const showSupViewer = useCallback(
+    (folder: string | undefined, href: string | undefined, label: string) => {
       if (!folder || !href) return;
-      const key = `${folder}::${href}`;
-      if (supHoverOpened.current === key) return;
-      const win = window.open(
-        amdtSupUrl(folder, href),
-        "_blank",
-        "noopener,noreferrer",
-      );
-      if (win) {
-        supHoverOpened.current = key;
-      } else {
-        toast.message("Allow pop-ups to open SUPs on hover");
-      }
+      setSupViewer((prev) => {
+        if (prev && prev.folder === folder && prev.href === href) return prev;
+        return { folder, href, label };
+      });
     },
     [],
   );
@@ -381,12 +385,15 @@ export function Workspace() {
                     aria-label={`Select SUP ${s.number}`}
                   />
                   <div
-                    className="min-w-0 flex-1 rounded px-0.5 text-xs leading-snug hover:bg-sky-50"
-                    title="Hover to open SUP in LFV eAIP — checkbox selects for parse"
-                    onMouseEnter={() => openSupOnHover(amdtId, s.href)}
-                    onMouseLeave={() => {
-                      supHoverOpened.current = null;
-                    }}
+                    className={`min-w-0 flex-1 rounded px-0.5 text-xs leading-snug hover:bg-sky-50 ${
+                      supViewer?.href === s.href
+                        ? "bg-sky-50 ring-1 ring-sky-300"
+                        : ""
+                    }`}
+                    title="Hover to preview SUP here — checkbox selects for parse"
+                    onMouseEnter={() =>
+                      showSupViewer(amdtId, s.href, `SUP ${s.number}`)
+                    }
                   >
                     <span className="font-medium text-sky-800 underline decoration-sky-300/80 underline-offset-2">
                       {s.number}
@@ -425,9 +432,34 @@ export function Workspace() {
             onSelectKey={setSelectedKey}
             layerVisibility={layerVisibility}
           />
-          <div className="pointer-events-none absolute bottom-3 left-3 rounded-md bg-white/90 px-2 py-1 text-[11px] text-slate-600 shadow">
+          <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded-md bg-white/90 px-2 py-1 text-[11px] text-slate-600 shadow">
             Red/gray = R/D 4F · Light fill + red border = R/D 3 · Yellow = TRA/PCA/CBA · Amber dashed = SUP candidate
           </div>
+          {supViewer && (
+            <div className="absolute inset-3 z-20 flex flex-col overflow-hidden rounded-lg border border-slate-300 bg-white shadow-xl">
+              <div className="flex items-center gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2">
+                <p className="min-w-0 flex-1 truncate text-sm font-medium text-slate-800">
+                  {supViewer.label}
+                </p>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 px-2 text-xs"
+                  onClick={() => setSupViewer(null)}
+                >
+                  Close
+                </Button>
+              </div>
+              <iframe
+                key={supViewerSrc(supViewer)}
+                title={supViewer.label}
+                src={supViewerSrc(supViewer)}
+                className="min-h-0 w-full flex-1 bg-white"
+                sandbox="allow-popups allow-popups-to-escape-sandbox"
+              />
+            </div>
+          )}
         </main>
 
         <aside className="flex min-h-0 flex-col gap-3 border-l border-slate-200/80 bg-white/70 p-3">
@@ -613,20 +645,21 @@ export function Workspace() {
                         <span
                           className={
                             supHref
-                              ? "font-medium text-sky-700 underline-offset-2 hover:underline"
+                              ? "font-medium text-sky-700 underline decoration-sky-300/80 underline-offset-2"
                               : undefined
                           }
                           title={
                             supHref
-                              ? "Hover to open SUP in LFV eAIP"
+                              ? "Hover to preview SUP here"
                               : undefined
                           }
                           onMouseEnter={() =>
-                            openSupOnHover(supFolder, supHref)
+                            showSupViewer(
+                              supFolder,
+                              supHref,
+                              `SUP ${d.candidate.provenance.supNumber}`,
+                            )
                           }
-                          onMouseLeave={() => {
-                            supHoverOpened.current = null;
-                          }}
                         >
                           SUP {d.candidate.provenance.supNumber}
                         </span>
