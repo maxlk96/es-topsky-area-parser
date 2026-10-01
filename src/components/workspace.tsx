@@ -55,7 +55,10 @@ import {
   mentionsUasActivity,
   mergeEnrAcceptPreservingNoaiw,
 } from "@/lib/areas/classify";
-import { defaultLabelPosition } from "@/lib/areas/default-label";
+import {
+  defaultLabelPosition,
+  labelForAccept,
+} from "@/lib/areas/default-label";
 import { upsertAreaInOrder } from "@/lib/areas/names";
 import { parseTopSkyBuffer } from "@/lib/areas/parse-topsky";
 import {
@@ -606,25 +609,16 @@ export function Workspace() {
       mapDefaultVisible: true,
       // Force full block rewrite on export (geometry / LIMITS / name).
       rawBlock: "",
+      // Keep baseline LABEL coords; only invent for brand-new areas.
+      label: labelForAccept(mergedEnr, existing),
     };
     if (accepted.boundCircle) {
       const red = redensifyBoundCircleAuto(accepted.boundCircle);
-      const c = accepted.boundCircle;
       accepted = {
         ...accepted,
         coordinates: red.coordinates,
         circleSpacingDeg: red.circleSpacingDeg,
-        // ESR94 etc. must stay unlabeled — don't invent a centre LABEL on Accept.
-        label: areaOmitsLabel(accepted)
-          ? undefined
-          : {
-              lat: c.lat,
-              lon: c.lon,
-              text: accepted.label?.text || accepted.name,
-            },
       };
-    } else if (areaOmitsLabel(accepted)) {
-      accepted = { ...accepted, label: undefined };
     }
     return accepted;
   };
@@ -669,24 +663,15 @@ export function Workspace() {
       prev.map((a) => {
         if (areaFeatureId(a) !== fid || !a.boundCircle) return a;
         const red = redensifyBoundCircle(a.boundCircle, spacingDeg);
-        const c = a.boundCircle;
-        // Keep LABEL on circle centre unless user already nudged it.
-        // Omit-label areas (ESR94) never get an active LABEL.
-        const label = areaOmitsLabel(a)
-          ? undefined
-          : a.label && a.labelEdited
-            ? a.label
-            : {
-                lat: c.lat,
-                lon: c.lon,
-                text: a.label?.text || a.name,
-              };
+        // Spacing changes geometry only — never snap LABEL to centre.
+        // Omit-label areas stay unlabeled; others keep existing LABEL coords.
+        const label = areaOmitsLabel(a) ? undefined : a.label;
         return {
           ...a,
           coordinates: red.coordinates,
           circleSpacingDeg: red.circleSpacingDeg,
           label,
-          // Force rewrite of geometry (+ LABEL) on export.
+          // Force rewrite of geometry on export (LABEL coords unchanged unless placer).
           rawBlock: "",
         };
       }),

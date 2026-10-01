@@ -1,5 +1,6 @@
 import centroid from "@turf/centroid";
 import { polygon } from "@turf/helpers";
+import { labelForAccept } from "@/lib/areas/default-label";
 import { parseAipVerticalToken } from "@/lib/areas/limits";
 import { isPcaSubPart } from "@/lib/areas/map-layers";
 import type { AreaRecord } from "@/lib/areas/types";
@@ -188,21 +189,12 @@ export function mergePcaAcceptPreservingLabel(
   candidate: AreaRecord,
   existing?: AreaRecord,
 ): AreaRecord {
-  const preservedLabel =
-    existing?.label != null
-      ? {
-          lat: existing.label.lat,
-          lon: existing.label.lon,
-          text: existing.label.text || candidate.name || candidate.id,
-        }
-      : candidate.label;
-
   return {
     ...candidate,
     section: existing?.section ?? "other",
     mapDefaultVisible: true,
     rawBlock: "",
-    label: preservedLabel,
+    label: labelForAccept(candidate, existing),
     // Keep ops directives from baseline when rewriting a known PCA.
     directives:
       existing?.directives?.length ? [...existing.directives] : candidate.directives,
