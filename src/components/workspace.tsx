@@ -369,7 +369,13 @@ export function Workspace() {
         }
         found.push(...(data.areas as AreaRecord[]));
       }
-      setCandidates(found.filter((a) => a.coordinates.length >= 3 || a.boundCircle));
+      setCandidates(
+        found.filter(
+          (a) =>
+            a.exclusionReason !== "fir_border" &&
+            (a.coordinates.length >= 3 || a.boundCircle),
+        ),
+      );
       const items = diffCandidates(areas, found);
       setDiffs(items);
       toast.success(`Parsed ${found.length} candidate areas → ${items.length} diff rows`);
@@ -402,11 +408,16 @@ export function Workspace() {
       );
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "AIP reload failed");
-      const found = (data.areas as AreaRecord[]).filter(
-        (a) => a.coordinates.length >= 3 || a.boundCircle,
+      const all = data.areas as AreaRecord[];
+      // Map overlay: only drawable geometry — FIR-border rows stay in diff as excluded.
+      setCandidates(
+        all.filter(
+          (a) =>
+            a.exclusionReason !== "fir_border" &&
+            (a.coordinates.length >= 3 || a.boundCircle),
+        ),
       );
-      setCandidates(found);
-      const items = diffCandidates(areas, found);
+      const items = diffCandidates(areas, all);
       setDiffs(items);
       toast.success(
         `AIP reload: ENR 5.1 ${data.enr51Count} · SUPs ${data.supParsed} → ${items.length} diff rows` +

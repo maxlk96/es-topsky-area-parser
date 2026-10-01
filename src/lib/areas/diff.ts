@@ -1,3 +1,7 @@
+import {
+  FIR_BORDER_EXCLUSION,
+  FIR_BORDER_NOTE,
+} from "@/lib/aip/fir-border";
 import { isUasOnlyText } from "./classify";
 import { normalizeDesignator } from "./names";
 import type { AreaRecord, DiffItem } from "./types";
@@ -29,6 +33,24 @@ export function diffCandidates(
       ? { ...candidate, id: candId }
       : candidate;
     const blob = `${normalized.provenance.rawComment ?? ""} ${normalized.name} ${normalized.exclusionReason ?? ""}`;
+    if (
+      normalized.exclusionReason === FIR_BORDER_EXCLUSION ||
+      /FIR\s*BDRY|along\s+the\s+FIR\b/i.test(
+        normalized.provenance.rawComment ?? "",
+      )
+    ) {
+      items.push({
+        status: "excluded",
+        candidate: {
+          ...normalized,
+          exclusionReason: FIR_BORDER_EXCLUSION,
+          coordinates: [],
+        },
+        existing: byId.get(candId),
+        notes: [FIR_BORDER_NOTE],
+      });
+      continue;
+    }
     if (normalized.exclusionReason === "uas_only" || isUasOnlyText(blob)) {
       items.push({
         status: "excluded",

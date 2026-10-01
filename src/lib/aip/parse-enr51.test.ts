@@ -23,6 +23,13 @@ ESR03 LOWER PART OF RIVER KALIX
 UNL
 GND
 Military.
+ESR1 ESRANGE
+690336N 0203255E along the FIR BDRY to 683156N 0215935E - 681745N 0214612E -
+675924N 0212754E - 674724N 0211613E - 674724N 0205443E - 675924N 0204843E -
+682121N 0195516E along the FIR BDRY to point of origin.
+UNL
+GND
+Rymdbas.
 </body></html>
 `;
 
@@ -64,6 +71,15 @@ describe("parseEnr51Html", () => {
     expect(r3).toBeTruthy();
     expect(r3.name).toMatch(/KALIX/);
     expect(areas.every((a) => a.provenance.source === "enr51")).toBe(true);
+  });
+
+  it("marks FIR BDRY areas as fir_border (manual only, no auto coords)", () => {
+    const areas = parseEnr51Html(ENR_SNIPPET, { amdtId: "test-amdt" });
+    const r1 = areas.find((a) => a.id === "ESR1")!;
+    expect(r1).toBeTruthy();
+    expect(r1.name).toBe("ESRANGE");
+    expect(r1.exclusionReason).toBe("fir_border");
+    expect(r1.coordinates).toEqual([]);
   });
 });
 

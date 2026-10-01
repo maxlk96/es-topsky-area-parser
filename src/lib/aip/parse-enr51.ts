@@ -13,6 +13,10 @@ import {
 import { parseAipVerticalToken } from "@/lib/areas/limits";
 import { isDesignatorOnlyName, normalizeDesignator } from "@/lib/areas/names";
 import type { AreaRecord } from "@/lib/areas/types";
+import {
+  FIR_BORDER_EXCLUSION,
+  hasFirBorderLateralLimits,
+} from "@/lib/aip/fir-border";
 
 function stripHtml(html: string): string {
   return html
@@ -93,6 +97,42 @@ export function parseEnr51Html(
     name = name.split(/\s*\/\s*/)[0]?.trim() || name;
     if (/^(and|och|area|areas)$/i.test(name)) continue;
     const chunk = m[0];
+    const shortName = shortFromDesignator(id);
+    const category = id.startsWith("ESD") ? "D" : "R";
+    const nameUp = name.toLocaleUpperCase("sv-SE");
+    const needsReview = isDesignatorOnlyName(nameUp, shortName, id)
+      ? ("missing_name" as const)
+      : undefined;
+
+    // Lateral limits that follow the FIR/national border cannot be densified
+    // from AIP corner points — keep baseline TopSky geometry (manual only).
+    if (hasFirBorderLateralLimits(chunk)) {
+      seen.add(id);
+      areas.push({
+        id,
+        shortName,
+        name: nameUp,
+        category,
+        areaTypeCode: "3",
+        coordinates: [],
+        limits: parseLimits(chunk),
+        activation: { type: "ALWAYS" },
+        directives: [],
+        mapDefaultVisible: false,
+        noaiw: false,
+        provenance: {
+          source: "enr51",
+          amdtId: meta.amdtId,
+          rawComment: chunk.slice(0, 400),
+        },
+        exclusionReason: FIR_BORDER_EXCLUSION,
+        needsReview,
+        rawBlock: "",
+        section: "other",
+      });
+      continue;
+    }
+
     let coordinates = parseCoords(chunk);
     const boundCircle = parseCircle(chunk);
     if (boundCircle && coordinates.length < 3) {
@@ -105,12 +145,6 @@ export function parseEnr51Html(
     }
     if (coordinates.length < 3 && !boundCircle) continue;
 
-    const shortName = shortFromDesignator(id);
-    const category = id.startsWith("ESD") ? "D" : "R";
-    const nameUp = name.toLocaleUpperCase("sv-SE");
-    const needsReview = isDesignatorOnlyName(nameUp, shortName, id)
-      ? ("missing_name" as const)
-      : undefined;
     const limits = parseLimits(chunk);
     const inferred = inferAreaTypeFromRemarks(chunk);
     // Permanent ENR R/D with flying/military often 4F; circle urban (Nynäshamn) often 3.

@@ -15,6 +15,10 @@ import { parseAipVerticalToken } from "@/lib/areas/limits";
 import { isDesignatorOnlyName } from "@/lib/areas/names";
 import type { AreaRecord } from "@/lib/areas/types";
 import { parseValidityWindow } from "@/lib/areas/validity";
+import {
+  FIR_BORDER_EXCLUSION,
+  hasFirBorderLateralLimits,
+} from "@/lib/aip/fir-border";
 
 function stripHtml(html: string): string {
   return html
@@ -191,6 +195,46 @@ function buildAreaFromSection(
   const needsReview =
     isDesignatorOnlyName(name, shortName, id) ? ("missing_name" as const) : undefined;
 
+  const remarks = text.slice(0, 4000);
+  const validity = parseValidityWindow(section.chunk, text, meta);
+
+  // FIR / national-border arcs cannot be auto-parsed — leave baseline alone.
+  if (
+    hasFirBorderLateralLimits(section.chunk) ||
+    hasFirBorderLateralLimits(remarks)
+  ) {
+    return {
+      id,
+      shortName,
+      name,
+      category,
+      areaTypeCode: "3",
+      coordinates: [],
+      limits: parseLimitsFromChunk(section.chunk, text),
+      activation: { type: "MANUAL" },
+      directives: [],
+      mapDefaultVisible: false,
+      noaiw: false,
+      provenance: {
+        source: "sup",
+        amdtId: meta.amdtId,
+        supNumber: meta.supNumber,
+        href: meta.href,
+        validFrom: validity.validFrom,
+        validTo: validity.validTo,
+        validityWindows: validity.windows?.map((w) => ({
+          from: w.validFrom,
+          to: w.validTo,
+        })),
+        rawComment: remarks.slice(0, 500),
+      },
+      exclusionReason: FIR_BORDER_EXCLUSION,
+      needsReview,
+      rawBlock: "",
+      section: "tempo",
+    };
+  }
+
   let coordinates = parseCoordsFromChunk(section.chunk);
   const boundCircle = parseCircleFromChunk(section.chunk);
   if (boundCircle && coordinates.length < 3) {
@@ -204,14 +248,11 @@ function buildAreaFromSection(
   if (coordinates.length < 3 && !boundCircle) return null;
 
   const limits = parseLimitsFromChunk(section.chunk, text);
-  const remarks = text.slice(0, 4000);
   const inferred = inferAreaTypeFromRemarks(remarks);
   const flyingSup = /military aviation|aviation operations|flygverksamhet/i.test(
     text,
   );
   const useAup = flyingSup || inferred.reason === "flying_or_ats_permission";
-
-  const validity = parseValidityWindow(section.chunk, text, meta);
 
   let label: AreaRecord["label"];
   if (coordinates.length >= 3) {

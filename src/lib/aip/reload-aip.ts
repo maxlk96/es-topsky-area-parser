@@ -1,3 +1,4 @@
+import { FIR_BORDER_EXCLUSION } from "@/lib/aip/fir-border";
 import { mentionsUasActivity } from "@/lib/areas/classify";
 import { isExpired } from "@/lib/areas/validity";
 import { normalizeDesignator } from "@/lib/areas/names";
@@ -7,6 +8,7 @@ import type { AreaRecord } from "@/lib/areas/types";
  * Merge ENR 5.1 permanent R/D with tempo SUP candidates.
  * Same designator: prefer a non-expired SUP (tempo override), else ENR 5.1.
  * Does not invent names; preserves needsReview.
+ * FIR-border areas stay excluded — never overwritten by auto-parse.
  */
 export function mergeAipReloadCandidates(
   enr51: AreaRecord[],
@@ -27,6 +29,18 @@ export function mergeAipReloadCandidates(
     if (isExpired(a, now)) continue;
     const id = normalizeDesignator(a.id);
     const prev = byId.get(id);
+    // Baseline FIR-border geometry is hand-maintained — do not let SUP/ENR reparse replace it.
+    if (prev?.exclusionReason === FIR_BORDER_EXCLUSION) continue;
+    if (a.exclusionReason === FIR_BORDER_EXCLUSION) {
+      byId.set(id, {
+        ...a,
+        id,
+        shortName: a.shortName || id.replace(/^ES/i, ""),
+        coordinates: [],
+        exclusionReason: FIR_BORDER_EXCLUSION,
+      });
+      continue;
+    }
     byId.set(id, {
       ...a,
       id,
