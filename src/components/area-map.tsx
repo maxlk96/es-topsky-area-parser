@@ -164,6 +164,26 @@ function buildStyle(): StyleSpecification {
           "line-dasharray": [2, 1],
         },
       },
+      {
+        id: "cand-hover-fill",
+        type: "fill",
+        source: "candidates",
+        filter: ["==", ["get", "fid"], ""],
+        paint: {
+          "fill-color": "#0ea5e9",
+          "fill-opacity": 0.4,
+        },
+      },
+      {
+        id: "cand-hover-line",
+        type: "line",
+        source: "candidates",
+        filter: ["==", ["get", "fid"], ""],
+        paint: {
+          "line-color": "#0284c7",
+          "line-width": 3.5,
+        },
+      },
     ],
   };
 }
@@ -183,11 +203,13 @@ function setSourceData(
 function setHoverFilter(map: MapLibreMap, fid: string | null) {
   // Expression filter; cast avoids MapLibre's overloaded FilterSpecification unions.
   const filter = ["==", ["get", "fid"], fid ?? ""] as never;
-  if (map.getLayer("areas-hover-fill")) {
-    map.setFilter("areas-hover-fill", filter);
-  }
-  if (map.getLayer("areas-hover-line")) {
-    map.setFilter("areas-hover-line", filter);
+  for (const id of [
+    "areas-hover-fill",
+    "areas-hover-line",
+    "cand-hover-fill",
+    "cand-hover-line",
+  ]) {
+    if (map.getLayer(id)) map.setFilter(id, filter);
   }
 }
 
@@ -260,6 +282,9 @@ export function AreaMap({
     map.on("mousemove", "areas-fill", onMove);
     map.on("mouseleave", "areas-fill", onLeave);
     map.on("click", "areas-fill", onClick);
+    map.on("mousemove", "cand-fill", onMove);
+    map.on("mouseleave", "cand-fill", onLeave);
+    map.on("click", "cand-fill", onClick);
 
     map.on("error", (e) => {
       console.error("[AreaMap]", e.error?.message ?? e);

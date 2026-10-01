@@ -22,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { amdtSupUrl } from "@/lib/aip/amdt";
 import { diffCandidates } from "@/lib/areas/diff";
 import { parseTopSkyBuffer, parseTopSkyText } from "@/lib/areas/parse-topsky";
 import { encodeLatin1, mergeTempoSection } from "@/lib/areas/write-topsky";
@@ -42,6 +43,7 @@ import {
   type LayerKey,
   type LayerVisibility,
 } from "@/lib/areas/map-layers";
+import { ExternalLinkIcon } from "lucide-react";
 
 type BaselineKind = "github" | "local";
 
@@ -331,21 +333,38 @@ export function Workspace() {
           <ScrollArea className="min-h-0 flex-1">
             <div className="space-y-2 pr-2">
               {sups.filter((s) => s.likelyArea).map((s) => (
-                <label
+                <div
                   key={s.href}
-                  className="flex cursor-pointer gap-2 rounded-md border border-transparent px-1 py-1 hover:border-slate-200 hover:bg-white"
+                  className="flex items-start gap-2 rounded-md border border-transparent px-1 py-1 hover:border-slate-200 hover:bg-white"
                 >
-                  <Checkbox
-                    checked={!!selectedSups[s.href]}
-                    onCheckedChange={(v) =>
-                      setSelectedSups((prev) => ({ ...prev, [s.href]: !!v }))
-                    }
-                  />
-                  <span className="text-xs leading-snug">
-                    <span className="font-medium text-slate-800">{s.number}</span>{" "}
-                    <span className="text-slate-600">{s.subject.slice(0, 90)}</span>
-                  </span>
-                </label>
+                  <label className="flex min-w-0 flex-1 cursor-pointer gap-2">
+                    <Checkbox
+                      checked={!!selectedSups[s.href]}
+                      onCheckedChange={(v) =>
+                        setSelectedSups((prev) => ({ ...prev, [s.href]: !!v }))
+                      }
+                    />
+                    <span className="text-xs leading-snug">
+                      <span className="font-medium text-slate-800">{s.number}</span>{" "}
+                      <span className="text-slate-600">{s.subject.slice(0, 90)}</span>
+                    </span>
+                  </label>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 shrink-0 gap-1 px-2 text-xs"
+                    disabled={!amdtId}
+                    title="Open SUP to decide if relevant, then select/deselect"
+                    onClick={() => {
+                      if (!amdtId) return;
+                      window.open(amdtSupUrl(amdtId, s.href), "_blank", "noopener,noreferrer");
+                    }}
+                  >
+                    <ExternalLinkIcon className="size-3.5" />
+                    Open
+                  </Button>
+                </div>
               ))}
               {!sups.length && (
                 <p className="text-xs text-slate-500">
@@ -503,8 +522,41 @@ export function Workspace() {
           </p>
           <ScrollArea className="min-h-0 flex-1 rounded-md border border-slate-200 bg-white">
             <ul className="divide-y divide-slate-100 text-sm">
-              {diffs.map((d) => (
-                <li key={d.candidate.id + d.status} className="space-y-1 px-2 py-2">
+              {diffs.map((d) => {
+                const fid = areaFeatureId(d.candidate);
+                const hovered = hoverKey === fid;
+                const selected = selectedKey === fid;
+                const supHref =
+                  d.candidate.provenance.href ||
+                  sups.find(
+                    (s) =>
+                      s.number === d.candidate.provenance.supNumber ||
+                      s.href.includes(
+                        (d.candidate.provenance.supNumber || "").replace("/", "-"),
+                      ),
+                  )?.href;
+                const openSup = () => {
+                  const folder = d.candidate.provenance.amdtId || amdtId;
+                  if (!folder || !supHref) {
+                    toast.message("No SUP link for this candidate");
+                    return;
+                  }
+                  window.open(amdtSupUrl(folder, supHref), "_blank", "noopener,noreferrer");
+                };
+                return (
+                <li
+                  key={d.candidate.id + d.status + fid}
+                  data-area-fid={fid}
+                  className={`space-y-1 px-2 py-2 ${
+                    selected
+                      ? "bg-sky-100"
+                      : hovered
+                        ? "bg-sky-50"
+                        : ""
+                  }`}
+                  onMouseEnter={() => setHoverKey(fid)}
+                  onMouseLeave={() => setHoverKey(null)}
+                >
                   <div className="flex items-center gap-2">
                     <Badge
                       variant={
@@ -520,7 +572,10 @@ export function Workspace() {
                     <button
                       type="button"
                       className="font-medium hover:underline"
-                      onClick={() => setFocusId(d.candidate.id)}
+                      onClick={() => {
+                        setSelectedKey(fid);
+                        setFocusId(d.candidate.id);
+                      }}
                     >
                       {d.candidate.id}
                     </button>
@@ -530,15 +585,32 @@ export function Workspace() {
                     {d.candidate.limits
                       ? ` · LIMITS ${d.candidate.limits.join(":")}`
                       : ""}
+                    {d.candidate.provenance.supNumber
+                      ? ` · SUP ${d.candidate.provenance.supNumber}`
+                      : ""}
                     {d.notes.length ? ` — ${d.notes.join("; ")}` : ""}
                   </p>
-                  {(d.status === "new" || d.status === "changed") && (
-                    <Button size="sm" variant="outline" onClick={() => acceptDiff(d)}>
-                      Accept
+                  <div className="flex flex-wrap gap-1.5">
+                    {(d.status === "new" || d.status === "changed") && (
+                      <Button size="sm" variant="outline" onClick={() => acceptDiff(d)}>
+                        Accept
+                      </Button>
+                    )}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="gap-1"
+                      onClick={openSup}
+                      disabled={!supHref}
+                      title="Open SUP to decide relevance"
+                    >
+                      <ExternalLinkIcon className="size-3.5" />
+                      Open SUP
                     </Button>
-                  )}
+                  </div>
                 </li>
-              ))}
+                );
+              })}
               {!diffs.length && (
                 <li className="px-2 py-3 text-xs text-slate-500">
                   Parse SUPs to populate New / Changed / Excluded / Duplicate rows.

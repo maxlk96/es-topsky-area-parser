@@ -21,6 +21,8 @@ export interface AreaProvenance {
   source: AreaSource;
   amdtId?: string;
   supNumber?: string;
+  /** Relative eSUP path (e.g. AIP SUP 123-25 en-GB.html) for opening the source. */
+  href?: string;
   validFrom?: string;
   validTo?: string;
   rawComment?: string;
