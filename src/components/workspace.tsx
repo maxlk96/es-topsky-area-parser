@@ -580,14 +580,50 @@ export function Workspace() {
               className="w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm"
               value={amdtId}
               onChange={(e) => setAmdtId(e.target.value)}
+              aria-label="Select AIP AMDT"
             >
               <option value="">Select AMDT…</option>
-              {amdts.map((a) => (
-                <option key={a.folder + a.kind} value={a.folder}>
-                  [{a.kind}] {a.title || a.folder}
-                </option>
-              ))}
+              {amdts.map((a) => {
+                const eff = a.effectiveDate?.trim();
+                const label = a.title || a.folder;
+                return (
+                  <option key={a.folder + a.kind} value={a.folder}>
+                    [{a.kind}] {label}
+                    {eff ? ` — eff. ${eff}` : ""}
+                  </option>
+                );
+              })}
             </select>
+            {amdtId ? (
+              <p className="text-[11px] leading-snug text-slate-500">
+                {(() => {
+                  const sel = amdts.find((a) => a.folder === amdtId);
+                  if (!sel) return null;
+                  return (
+                    <>
+                      <span className="font-medium text-slate-700">
+                        {sel.title || sel.folder}
+                      </span>
+                      {sel.effectiveDate ? (
+                        <>
+                          {" · "}
+                          Effective{" "}
+                          <span className="font-medium text-slate-800">
+                            {sel.effectiveDate}
+                          </span>
+                        </>
+                      ) : null}
+                      {sel.publicationDate ? (
+                        <span className="text-slate-400">
+                          {" "}
+                          · pub. {sel.publicationDate}
+                        </span>
+                      ) : null}
+                    </>
+                  );
+                })()}
+              </p>
+            ) : null}
             <Button size="sm" className="w-full" onClick={scanSups} disabled={!amdtId || loading}>
               Scan SUPs for areas
             </Button>
