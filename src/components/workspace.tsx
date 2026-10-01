@@ -27,34 +27,22 @@ import { parseTopSkyBuffer, parseTopSkyText } from "@/lib/areas/parse-topsky";
 import { encodeLatin1, mergeTempoSection } from "@/lib/areas/write-topsky";
 import type {
   AmdtEntry,
-  AreaCategory,
   AreaRecord,
   DiffItem,
   SupCatalogueRow,
 } from "@/lib/areas/types";
-import type { CategoryVisibility } from "@/components/area-map";
+import {
+  DEFAULT_LAYER_VISIBILITY,
+  LAYER_GROUPS,
+  countByLayerKey,
+  groupToggleState,
+  isLayerVisible,
+  type LayerGroup,
+  type LayerKey,
+  type LayerVisibility,
+} from "@/lib/areas/map-layers";
 
 type BaselineKind = "github" | "local";
-
-/** Plan defaults: R/D/TRA/PCA/CBA on; OTHER (TCT/STCA/…) off. */
-const DEFAULT_CATEGORY_VISIBILITY: CategoryVisibility = {
-  R: true,
-  D: true,
-  P: true,
-  TRA: true,
-  CBA: true,
-  PCA: true,
-  OTHER: false,
-};
-
-const MAP_TOGGLE_CATEGORIES: { category: AreaCategory; label: string }[] = [
-  { category: "R", label: "R" },
-  { category: "D", label: "D" },
-  { category: "PCA", label: "PCA" },
-  { category: "TRA", label: "TRA" },
-  { category: "CBA", label: "CBA" },
-  { category: "OTHER", label: "OTHER" },
-];
 
 export function Workspace() {
   const [baselineKind, setBaselineKind] = useState<BaselineKind>("github");
@@ -62,8 +50,8 @@ export function Workspace() {
   const [areas, setAreas] = useState<AreaRecord[]>([]);
   const [encoding, setEncoding] = useState("latin1");
   const [loading, setLoading] = useState(false);
-  const [categoryVisibility, setCategoryVisibility] = useState<CategoryVisibility>(
-    DEFAULT_CATEGORY_VISIBILITY,
+  const [layerVisibility, setLayerVisibility] = useState<LayerVisibility>(
+    DEFAULT_LAYER_VISIBILITY,
   );
   const [focusId, setFocusId] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
@@ -75,14 +63,22 @@ export function Workspace() {
   const [diffs, setDiffs] = useState<DiffItem[]>([]);
   const [candidates, setCandidates] = useState<AreaRecord[]>([]);
 
-  const setCategoryVisible = useCallback((category: AreaCategory, on: boolean) => {
-    setCategoryVisibility((prev) => ({ ...prev, [category]: on === true }));
+  const setLayerVisible = useCallback((key: LayerKey, on: boolean) => {
+    setLayerVisibility((prev) => ({ ...prev, [key]: on === true }));
+  }, []);
+
+  const setGroupVisible = useCallback((group: LayerGroup, on: boolean) => {
+    setLayerVisibility((prev) => {
+      const next = { ...prev };
+      for (const t of group.toggles) next[t.key] = on;
+      return next;
+    });
   }, []);
 
   const visibleList = useMemo(() => {
     const q = filter.trim().toUpperCase();
     return areas.filter((a) => {
-      if (categoryVisibility[a.category] !== true) return false;
+      if (!isLayerVisible(a, layerVisibility)) return false;
       if (!q) return true;
       return (
         a.id.includes(q) ||
@@ -90,7 +86,7 @@ export function Workspace() {
         a.shortName.toUpperCase().includes(q)
       );
     });
-  }, [areas, filter, categoryVisibility]);
+  }, [areas, filter, layerVisibility]);
 
   const loadGitHub = useCallback(async () => {
     setLoading(true);
@@ -250,12 +246,10 @@ export function Workspace() {
   };
 
   const counts = useMemo(() => {
-    const c = { R: 0, D: 0, P: 0, TRA: 0, CBA: 0, PCA: 0, OTHER: 0, tempo: 0 };
-    for (const a of areas) {
-      c[a.category] += 1;
-      if (a.section === "tempo") c.tempo++;
-    }
-    return c;
+    const byLayer = countByLayerKey(areas);
+    let tempo = 0;
+    for (const a of areas) if (a.section === "tempo") tempo++;
+    return { ...byLayer, tempo };
   }, [areas]);
 
   return (
@@ -365,7 +359,7 @@ export function Workspace() {
             areas={areas}
             candidates={candidates}
             focusId={focusId}
-            categoryVisibility={categoryVisibility}
+            layerVisibility={layerVisibility}
           />
           <div className="pointer-events-none absolute bottom-3 left-3 rounded-md bg-white/90 px-2 py-1 text-[11px] text-slate-600 shadow">
             Red/gray = R/D 4F · Light gray = R/D 3 · Yellow = TRA/PCA/CBA · Amber dashed = SUP candidate
@@ -374,40 +368,67 @@ export function Workspace() {
 
         <aside className="flex min-h-0 flex-col gap-3 border-l border-slate-200/80 bg-white/70 p-3">
           <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Areas</p>
-          <div className="rounded-md border border-slate-200 bg-white px-2 py-2">
-            <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-500">
+          <div className="max-h-[42%] space-y-2 overflow-y-auto rounded-md border border-slate-200 bg-white px-2 py-2">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
               Map layers
             </p>
-            <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
-              {MAP_TOGGLE_CATEGORIES.map(({ category, label }) => {
-                const on = categoryVisibility[category];
-                return (
-                  <div
-                    key={category}
-                    className="flex items-center justify-between gap-2 rounded px-0.5 py-0.5"
-                    title={
-                      category === "OTHER"
-                        ? "TCT / STCA / FS and other non-R/D areas"
-                        : undefined
-                    }
-                  >
-                    <span className="text-xs text-slate-700">
-                      {label}{" "}
-                      <span className="font-normal text-slate-400">
-                        ({counts[category]})
-                      </span>
-                    </span>
+            {LAYER_GROUPS.map((group) => {
+              const gState = groupToggleState(group, layerVisibility);
+              const groupCount = group.toggles.reduce(
+                (n, t) => n + (counts[t.key] ?? 0),
+                0,
+              );
+              return (
+                <div
+                  key={group.id}
+                  className="rounded border border-slate-100 bg-slate-50/80 px-2 py-1.5"
+                >
+                  <div className="mb-1 flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-slate-800">
+                        {group.title}{" "}
+                        <span className="font-normal text-slate-400">
+                          ({groupCount})
+                        </span>
+                      </p>
+                      <p className="text-[10px] leading-snug text-slate-500">
+                        {group.hint}
+                      </p>
+                    </div>
                     <Checkbox
-                      checked={on}
+                      checked={gState === "all"}
+                      indeterminate={gState === "some"}
                       onCheckedChange={(value) =>
-                        setCategoryVisible(category, value === true)
+                        setGroupVisible(group, value === true)
                       }
-                      aria-label={`Show ${label} on map`}
+                      aria-label={`Show group ${group.title}`}
                     />
                   </div>
-                );
-              })}
-            </div>
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+                    {group.toggles.map(({ key, label }) => (
+                      <div
+                        key={key}
+                        className="flex items-center justify-between gap-2"
+                      >
+                        <span className="text-xs text-slate-700">
+                          {label}{" "}
+                          <span className="text-slate-400">
+                            ({counts[key] ?? 0})
+                          </span>
+                        </span>
+                        <Checkbox
+                          checked={layerVisibility[key] === true}
+                          onCheckedChange={(value) =>
+                            setLayerVisible(key, value === true)
+                          }
+                          aria-label={`Show ${label} on map`}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
           </div>
           <Input
             placeholder="Filter id / name…"

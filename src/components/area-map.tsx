@@ -6,11 +6,16 @@ import {
   NavigationControl,
   setWorkerUrl,
   type GeoJSONSource,
+  type StyleSpecification,
 } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { mapStyleFor } from "@/lib/areas/classify";
 import { closeRing } from "@/lib/areas/coords";
-import type { AreaCategory, AreaRecord } from "@/lib/areas/types";
+import {
+  isLayerVisible,
+  type LayerVisibility,
+} from "@/lib/areas/map-layers";
+import type { AreaRecord } from "@/lib/areas/types";
 
 if (typeof window !== "undefined") {
   // Absolute URL so the module worker can resolve maplibre-gl-shared.mjs
@@ -18,16 +23,18 @@ if (typeof window !== "undefined") {
   setWorkerUrl(`${window.location.origin}/maplibre-gl-worker.mjs`);
 }
 
-export type CategoryVisibility = Record<AreaCategory, boolean>;
-
 type Props = {
   areas: AreaRecord[];
   candidates?: AreaRecord[];
   focusId?: string | null;
-  categoryVisibility: CategoryVisibility;
+  layerVisibility: LayerVisibility;
 };
 
 type Role = "base" | "candidate";
+
+function emptyCollection() {
+  return { type: "FeatureCollection" as const, features: [] };
+}
 
 function toFeatureCollection(areas: AreaRecord[], role: Role) {
   return {
@@ -36,6 +43,11 @@ function toFeatureCollection(areas: AreaRecord[], role: Role) {
       .filter((a) => a.coordinates.length >= 3)
       .map((a) => {
         const style = mapStyleFor(a);
+        // Slightly stronger fill so R/D reads clearly on light basemap.
+        const fillOpacity =
+          role === "candidate"
+            ? 0.14
+            : Math.max(style.fillOpacity, a.areaTypeCode === "3" ? 0.12 : 0.32);
         return {
           type: "Feature" as const,
           properties: {
@@ -46,8 +58,8 @@ function toFeatureCollection(areas: AreaRecord[], role: Role) {
             role,
             stroke: role === "candidate" ? "#f59e0b" : style.stroke,
             fill: role === "candidate" ? "#f59e0b" : style.fill,
-            fillOpacity: role === "candidate" ? 0.12 : style.fillOpacity,
-            lineWidth: role === "candidate" ? 2.5 : style.lineWidth,
+            fillOpacity,
+            lineWidth: role === "candidate" ? 2.5 : Math.max(style.lineWidth, 2),
           },
           geometry: {
             type: "Polygon" as const,
@@ -55,6 +67,81 @@ function toFeatureCollection(areas: AreaRecord[], role: Role) {
           },
         };
       }),
+  };
+}
+
+/**
+ * Inline style: basemap + overlays declared together so a style URL swap
+ * cannot wipe GeoJSON layers (the previous empty-map failure mode).
+ */
+function buildStyle(): StyleSpecification {
+  return {
+    version: 8,
+    sources: {
+      basemap: {
+        type: "raster",
+        // Proxied CARTO light_nolabels (plain, no labels); key stays server-side.
+        tiles: [`${typeof window !== "undefined" ? window.location.origin : ""}/api/basemap/{z}/{x}/{y}`],
+        tileSize: 256,
+        attribution: "© OpenStreetMap © CARTO",
+      },
+      areas: {
+        type: "geojson",
+        data: emptyCollection(),
+      },
+      candidates: {
+        type: "geojson",
+        data: emptyCollection(),
+      },
+    },
+    layers: [
+      {
+        id: "basemap",
+        type: "raster",
+        source: "basemap",
+        paint: {
+          "raster-saturation": -0.25,
+          "raster-contrast": -0.05,
+        },
+      },
+      {
+        id: "areas-fill",
+        type: "fill",
+        source: "areas",
+        paint: {
+          "fill-color": ["get", "fill"],
+          "fill-opacity": ["get", "fillOpacity"],
+        },
+      },
+      {
+        id: "areas-line",
+        type: "line",
+        source: "areas",
+        paint: {
+          "line-color": ["get", "stroke"],
+          "line-width": ["get", "lineWidth"],
+        },
+      },
+      {
+        id: "cand-fill",
+        type: "fill",
+        source: "candidates",
+        paint: {
+          "fill-color": "#f59e0b",
+          "fill-opacity": 0.14,
+        },
+      },
+      {
+        id: "cand-line",
+        type: "line",
+        source: "candidates",
+        paint: {
+          "line-color": "#f59e0b",
+          "line-width": 2.5,
+          "line-dasharray": [2, 1],
+        },
+      },
+    ],
   };
 }
 
@@ -74,16 +161,19 @@ export function AreaMap({
   areas,
   candidates = [],
   focusId,
-  categoryVisibility,
+  layerVisibility,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
-  const sourcesReadyRef = useRef(false);
-  const latestRef = useRef({ visible: [] as AreaRecord[], candidates: [] as AreaRecord[] });
+  const readyRef = useRef(false);
+  const latestRef = useRef({
+    visible: [] as AreaRecord[],
+    candidates: [] as AreaRecord[],
+  });
 
   const visible = useMemo(
-    () => areas.filter((a) => categoryVisibility[a.category] === true),
-    [areas, categoryVisibility],
+    () => areas.filter((a) => isLayerVisible(a, layerVisibility)),
+    [areas, layerVisibility],
   );
 
   latestRef.current = { visible, candidates };
@@ -93,33 +183,7 @@ export function AreaMap({
 
     const map = new MapLibreMap({
       container: ref.current,
-      // Plain land/water basemap — no place, road, or POI labels.
-      style: {
-        version: 8,
-        sources: {
-          basemap: {
-            type: "raster",
-            tiles: [
-              "https://a.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}@2x.png",
-              "https://b.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}@2x.png",
-              "https://c.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}@2x.png",
-            ],
-            tileSize: 256,
-            attribution: "© OpenStreetMap © CARTO",
-          },
-        },
-        layers: [
-          {
-            id: "basemap",
-            type: "raster",
-            source: "basemap",
-            paint: {
-              "raster-saturation": -0.35,
-              "raster-contrast": -0.1,
-            },
-          },
-        ],
-      },
+      style: buildStyle(),
       center: [16.5, 62.0],
       zoom: 4.2,
     });
@@ -132,54 +196,7 @@ export function AreaMap({
     };
 
     map.on("load", () => {
-      if (!map.getSource("areas")) {
-        map.addSource("areas", {
-          type: "geojson",
-          data: toFeatureCollection([], "base"),
-        });
-        map.addSource("candidates", {
-          type: "geojson",
-          data: toFeatureCollection([], "candidate"),
-        });
-        map.addLayer({
-          id: "areas-fill",
-          type: "fill",
-          source: "areas",
-          paint: {
-            "fill-color": ["get", "fill"],
-            "fill-opacity": ["get", "fillOpacity"],
-          },
-        });
-        map.addLayer({
-          id: "areas-line",
-          type: "line",
-          source: "areas",
-          paint: {
-            "line-color": ["get", "stroke"],
-            "line-width": ["get", "lineWidth"],
-          },
-        });
-        map.addLayer({
-          id: "cand-fill",
-          type: "fill",
-          source: "candidates",
-          paint: {
-            "fill-color": "#f59e0b",
-            "fill-opacity": 0.12,
-          },
-        });
-        map.addLayer({
-          id: "cand-line",
-          type: "line",
-          source: "candidates",
-          paint: {
-            "line-color": "#f59e0b",
-            "line-width": 2.5,
-            "line-dasharray": [2, 1],
-          },
-        });
-      }
-      sourcesReadyRef.current = true;
+      readyRef.current = true;
       applyLatest();
     });
 
@@ -189,7 +206,7 @@ export function AreaMap({
 
     mapRef.current = map;
     return () => {
-      sourcesReadyRef.current = false;
+      readyRef.current = false;
       map.remove();
       mapRef.current = null;
     };
@@ -197,7 +214,14 @@ export function AreaMap({
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !sourcesReadyRef.current) return;
+    if (!map) return;
+    if (!readyRef.current) {
+      map.once("load", () => {
+        setSourceData(map, "areas", visible, "base");
+        setSourceData(map, "candidates", candidates, "candidate");
+      });
+      return;
+    }
     setSourceData(map, "areas", visible, "base");
     setSourceData(map, "candidates", candidates, "candidate");
   }, [visible, candidates]);
