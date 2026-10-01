@@ -3,7 +3,8 @@ import {
   IFR_PLANNING_EXCLUSION,
   isIfrPlanningOnlyArea,
 } from "@/lib/aip/ifr-planning";
-import { mentionsUasActivity } from "@/lib/areas/classify";
+import { isNotInAipArea, isNotInAipDesignator } from "@/lib/aip/not-in-aip";
+import { applyDesignatorPolicy, mentionsUasActivity } from "@/lib/areas/classify";
 import { isExpired } from "@/lib/areas/validity";
 import { normalizeDesignator } from "@/lib/areas/names";
 import type { AreaRecord } from "@/lib/areas/types";
@@ -24,6 +25,7 @@ export function mergeAipReloadCandidates(
 
   for (const a of enr51) {
     const id = normalizeDesignator(a.id);
+    if (isNotInAipDesignator(id) || isNotInAipArea(a)) continue;
     // Keep IFR-planning-only (ESD184Z/ESD185Z) as excluded stubs for Verify —
     // never as drawable/acceptables.
     if (isIfrPlanningOnlyArea(a) || a.exclusionReason === IFR_PLANNING_EXCLUSION) {
@@ -37,11 +39,19 @@ export function mergeAipReloadCandidates(
       });
       continue;
     }
-    byId.set(id, { ...a, id, shortName: a.shortName || id.replace(/^ES/i, "") });
+    byId.set(
+      id,
+      applyDesignatorPolicy({
+        ...a,
+        id,
+        shortName: a.shortName || id.replace(/^ES/i, ""),
+      }),
+    );
   }
 
   for (const a of sups) {
     if (a.exclusionReason === "uas_only") continue;
+    if (isNotInAipDesignator(a.id) || isNotInAipArea(a)) continue;
     if (a.exclusionReason === IFR_PLANNING_EXCLUSION || isIfrPlanningOnlyArea(a)) {
       continue; // never import IFR-planning-only from SUP
     }
@@ -62,17 +72,20 @@ export function mergeAipReloadCandidates(
       });
       continue;
     }
-    byId.set(id, {
-      ...a,
+    byId.set(
       id,
-      shortName: a.shortName || id.replace(/^ES/i, ""),
-      provenance: {
-        ...a.provenance,
-        rawComment: prev
-          ? `${a.provenance.rawComment || ""} · overrides ENR 5.1`.slice(0, 500)
-          : a.provenance.rawComment,
-      },
-    });
+      applyDesignatorPolicy({
+        ...a,
+        id,
+        shortName: a.shortName || id.replace(/^ES/i, ""),
+        provenance: {
+          ...a.provenance,
+          rawComment: prev
+            ? `${a.provenance.rawComment || ""} · overrides ENR 5.1`.slice(0, 500)
+            : a.provenance.rawComment,
+        },
+      }),
+    );
   }
 
   return [...byId.values()].sort((a, b) => a.id.localeCompare(b.id));

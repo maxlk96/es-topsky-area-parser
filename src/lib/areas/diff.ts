@@ -7,9 +7,14 @@ import {
   IFR_PLANNING_NOTE,
   isIfrPlanningOnlyArea,
 } from "@/lib/aip/ifr-planning";
+import {
+  NOT_IN_AIP_EXCLUSION,
+  NOT_IN_AIP_NOTE,
+  isNotInAipArea,
+} from "@/lib/aip/not-in-aip";
 import { supNumberKey } from "@/lib/aip/sup-catalogue";
 import { activationLabel } from "./activation";
-import { isUasOnlyText } from "./classify";
+import { applyDesignatorPolicy, isUasOnlyText } from "./classify";
 import { normalizeDesignator } from "./names";
 import type { AreaRecord, DiffItem } from "./types";
 import { isExpired, isUpcoming } from "./validity";
@@ -249,10 +254,25 @@ export function diffCandidates(
   for (const candidate of candidates) {
     const notes: string[] = [];
     const candId = normalizeDesignator(candidate.id);
-    const normalized = candId !== candidate.id.toUpperCase()
-      ? { ...candidate, id: candId }
-      : candidate;
+    const normalized = applyDesignatorPolicy(
+      candId !== candidate.id.toUpperCase()
+        ? { ...candidate, id: candId }
+        : candidate,
+    );
     const blob = `${normalized.provenance.rawComment ?? ""} ${normalized.name} ${normalized.exclusionReason ?? ""}`;
+    if (isNotInAipArea(normalized)) {
+      items.push({
+        status: "excluded",
+        candidate: {
+          ...normalized,
+          exclusionReason: NOT_IN_AIP_EXCLUSION,
+          coordinates: [],
+        },
+        existing: byId.get(candId),
+        notes: [NOT_IN_AIP_NOTE],
+      });
+      continue;
+    }
     if (
       normalized.exclusionReason === FIR_BORDER_EXCLUSION ||
       /FIR\s*BDRY|along\s+the\s+FIR\b/i.test(

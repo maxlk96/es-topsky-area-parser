@@ -1,6 +1,7 @@
 import centroid from "@turf/centroid";
 import { polygon } from "@turf/helpers";
 import {
+  applyDesignatorPolicy,
   areaOmitsLabel,
   hasAviationFlyingWording,
   inferAreaTypeFromRemarks,
@@ -25,6 +26,7 @@ import {
   isIfrPlanningOnlyDesignator,
   isIfrPlanningOnlyText,
 } from "@/lib/aip/ifr-planning";
+import { isNotInAipDesignator } from "@/lib/aip/not-in-aip";
 
 function stripHtml(html: string): string {
   return html
@@ -104,6 +106,11 @@ export function parseEnr51Html(
     const rawId = m[1].toUpperCase();
     const id = normalizeDesignator(rawId);
     if (seen.has(id)) continue;
+    // Hard exclude — never emit into reload/diff working set.
+    if (isNotInAipDesignator(id)) {
+      seen.add(id);
+      continue;
+    }
     let name = m[2].trim().replace(/\s+/g, " ");
     name = name.split(/\s*\/\s*/)[0]?.trim() || name;
     if (/^(and|och|area|areas)$/i.test(name)) continue;
@@ -268,32 +275,34 @@ export function parseEnr51Html(
     }
 
     seen.add(id);
-    areas.push({
-      id,
-      shortName,
-      name: nameUp,
-      category,
-      areaTypeCode,
-      coordinates,
-      limits,
-      activation: noaiw
-        ? { type: "AUP", key: id }
-        : { type: "ALWAYS" },
-      directives: noaiw ? ["NOAIW"] : [],
-      label,
-      mapDefaultVisible: true,
-      noaiw,
-      boundCircle,
-      circleSpacingDeg,
-      provenance: {
-        source: "enr51",
-        amdtId: meta.amdtId,
-        rawComment: chunk.slice(0, 400),
-      },
-      needsReview,
-      rawBlock: "",
-      section: "other",
-    });
+    areas.push(
+      applyDesignatorPolicy({
+        id,
+        shortName,
+        name: nameUp,
+        category,
+        areaTypeCode,
+        coordinates,
+        limits,
+        activation: noaiw
+          ? { type: "AUP", key: id }
+          : { type: "ALWAYS" },
+        directives: noaiw ? ["NOAIW"] : [],
+        label,
+        mapDefaultVisible: true,
+        noaiw,
+        boundCircle,
+        circleSpacingDeg,
+        provenance: {
+          source: "enr51",
+          amdtId: meta.amdtId,
+          rawComment: chunk.slice(0, 400),
+        },
+        needsReview,
+        rawBlock: "",
+        section: "other",
+      }),
+    );
   }
 
   return areas;

@@ -215,7 +215,7 @@ See para 3.1.1. Information about activity obtainable from STOCKHOLM ACC.
     expect(d171.section).toBe("other");
   });
 
-  it("ESR94 Sörentorp is parsed without an active LABEL", () => {
+  it("ESR94 Sörentorp is AREA:3 ACTIVE:1 with // NO LABEL (Max policy)", () => {
     const html = `
 <html><body>
 ESR94 SÖRENTORP
@@ -223,12 +223,17 @@ A circle with radius 0.5 NM centred on 592348N 0175929E.
 1500 ft AMSL
 GND
 Särskilda tillstånd från Transportstyrelsen krävs förutom för svenska luftfartyg.
+During BROMMA ATS operating hours, permission for exempted traffic shall be obtained from BROMMA ATS.
 </body></html>`;
     const areas = parseEnr51Html(html, { amdtId: "test-amdt" });
     const r94 = areas.find((a) => a.id === "ESR94")!;
     expect(r94).toBeTruthy();
     expect(r94.boundCircle).toBeTruthy();
     expect(r94.label).toBeUndefined();
+    expect(r94.areaTypeCode).toBe("3");
+    expect(r94.noaiw).toBe(false);
+    expect(r94.activation).toEqual({ type: "ALWAYS" });
+    expect(r94.directives || []).not.toContain("NOAIW");
   });
 });
 

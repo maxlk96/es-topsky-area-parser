@@ -246,4 +246,40 @@ N065.51.52.000 E021.25.27.000
     expect(ockero.provenance.supNumber).not.toBe("146/26");
     expect(deger.provenance.supNumber).toBe("146/26");
   });
+
+  it("excludes ESR111 (not in AIP) from the working set", () => {
+    const text = `
+//ESR110 Huddinge
+AREA:3:  R110
+ACTIVE:1
+LIMITS:0:020
+N059.20.26.000 E017.52.30.000
+N059.20.24.879 E017.52.52.434
+N059.19.20.000 E017.52.30.000
+N059.20.26.000 E017.52.30.000
+
+//ESR111 SÖRENTORP
+AREA:3:  R111
+ACTIVE:1
+LIMITS:0:015
+BOUND:C:N059.23.48.000:E017.59.29.000:0.5
+N059.23.48.000 E017.59.29.000
+N059.23.48.000 E018.00.00.000
+N059.24.00.000 E018.00.00.000
+N059.23.48.000 E017.59.29.000
+
+//ESR112 VÄLLINGE
+AREA:4F:  R112
+ACTIVE:AUP:ESR112
+LIMITS:0:050
+N059.20.26.000 E017.52.30.000
+N059.20.24.879 E017.52.52.434
+N059.19.20.000 E017.52.30.000
+N059.20.26.000 E017.52.30.000
+`;
+    const { areas } = parseTopSkyText(text);
+    expect(areas.find((a) => a.id === "ESR111")).toBeUndefined();
+    expect(areas.find((a) => a.shortName === "R111")).toBeUndefined();
+    expect(areas.map((a) => a.id).sort()).toEqual(["ESR110", "ESR112"]);
+  });
 });

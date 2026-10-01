@@ -1,4 +1,6 @@
+import { isNotInAipDesignator } from "@/lib/aip/not-in-aip";
 import {
+  applyDesignatorPolicy,
   areaOmitsLabel,
   classifyFromName,
   designatorFromShort,
@@ -69,6 +71,12 @@ export function parseTopSkyText(text: string, encoding = "latin1"): ParseResult 
       inTempo ? "tempo" : "other",
     );
     const id = designatorFromShort(cur.shortName);
+    // Max: R111 etc. not in AIP — never enter the working set.
+    if (isNotInAipDesignator(id) || isNotInAipDesignator(cur.shortName)) {
+      cur = null;
+      pendingComments = [];
+      return;
+    }
     const uasBlob = `${cur.commentName ?? ""} ${cur.shortName} ${id}`;
     const uasOnly = isUasOnlyText(uasBlob);
     const mapDefaultVisible = uasOnly ? false : defaultVisible;
@@ -159,7 +167,7 @@ export function parseTopSkyText(text: string, encoding = "latin1"): ParseResult 
       validTo = activeSup.validTo;
     }
 
-    areas.push({
+    const record = applyDesignatorPolicy({
       id,
       shortName,
       name: resolved.name,
@@ -189,6 +197,7 @@ export function parseTopSkyText(text: string, encoding = "latin1"): ParseResult 
       rawBlock,
       section: inTempo ? "tempo" : "other",
     });
+    areas.push(record);
     void end;
     cur = null;
     pendingComments = [];

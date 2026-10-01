@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyDesignatorPolicy,
   areaOmitsLabel,
   isUasOnlyText,
   mentionsUasActivity,
 } from "./classify";
+import type { AreaRecord } from "./types";
 
 describe("areaOmitsLabel", () => {
   it("flags ESR94 / ESR102 / ESR127 (and short forms)", () => {
@@ -14,6 +16,39 @@ describe("areaOmitsLabel", () => {
     expect(areaOmitsLabel({ id: "ESR127", shortName: "R127" })).toBe(true);
     expect(areaOmitsLabel({ id: "R127" })).toBe(true);
     expect(areaOmitsLabel({ id: "ESR117", shortName: "R117" })).toBe(false);
+  });
+});
+
+describe("applyDesignatorPolicy", () => {
+  it("forces ESR94 to AREA:3 ACTIVE:1 without NOAIW/LABEL", () => {
+    const raw = {
+      id: "ESR94",
+      shortName: "R94",
+      name: "SÖRENTORP",
+      category: "R",
+      areaTypeCode: "4F",
+      coordinates: [
+        [17.99, 59.39],
+        [18.0, 59.39],
+        [18.0, 59.4],
+        [17.99, 59.39],
+      ],
+      limits: [0, 15] as [number, number],
+      activation: { type: "AUP" as const, key: "ESR94" },
+      directives: ["NOAIW"],
+      label: { lat: 59.39, lon: 17.99, text: "SÖRENTORP" },
+      mapDefaultVisible: true,
+      noaiw: true,
+      provenance: { source: "enr51" as const },
+      rawBlock: "",
+      section: "other" as const,
+    } satisfies AreaRecord;
+    const out = applyDesignatorPolicy(raw);
+    expect(out.areaTypeCode).toBe("3");
+    expect(out.activation).toEqual({ type: "ALWAYS" });
+    expect(out.noaiw).toBe(false);
+    expect(out.directives).not.toContain("NOAIW");
+    expect(out.label).toBeUndefined();
   });
 });
 

@@ -1,3 +1,4 @@
+import { NOT_IN_AIP_DESIGNATORS } from "@/lib/aip/not-in-aip";
 import {
   formatSupNumberShort,
   supNumberKey,
@@ -593,11 +594,41 @@ function sanitizeCoordBearingLine(line: string): string {
 }
 
 /**
- * Final pass before download: trim EOL spaces, drop whitespace-only lines,
- * and rewrite any LABEL/coord lines that still contain seconds=60 (legacy).
+ * Remove blocks for designators that must not appear in TopSky (e.g. ESR111).
+ * Runs on export so baseline raw text cannot leak excluded areas.
+ */
+export function stripNotInAipBlocks(text: string): string {
+  let out = text.replace(/\r\n/g, "\n");
+  for (const id of NOT_IN_AIP_DESIGNATORS) {
+    const short = shortFromDesignator(id);
+    const found = findAreaBlock(out, {
+      id,
+      shortName: short,
+    } as AreaRecord);
+    if (!found) continue;
+    const before = out.slice(0, found.start);
+    let after = out.slice(found.start + found.block.length);
+    // Drop one leading blank run left by the removed block.
+    after = after.replace(/^\n{1,3}/, "\n");
+    out = before.replace(/\n{3,}$/, "\n\n") + after;
+  }
+  // Also drop orphan AREA lines if header was missing.
+  out = out.replace(
+    /(?:^|\n)(?:\/\/ESR111[^\n]*\n)?(?:\/\/)?AREA:[^:\n]+:\s*R111\s*\n(?:(?!\/\/ES[A-Z0-9]|\/{10,})[^\n]*\n)*/gi,
+    "\n",
+  );
+  return out;
+}
+
+/**
+ * Final pass before download: strip not-in-AIP blocks, trim EOL spaces,
+ * drop whitespace-only lines, and rewrite LABEL/coord lines with seconds=60.
  */
 export function sanitizeExportedTopSkyText(text: string): string {
-  const lines = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+  const lines = stripNotInAipBlocks(text)
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .split("\n");
   const out: string[] = [];
   for (const raw of lines) {
     let line = raw.replace(/[ \t]+$/g, "");

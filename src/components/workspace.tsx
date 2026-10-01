@@ -49,8 +49,10 @@ import {
   IFR_PLANNING_NOTE,
   isIfrPlanningOnlyArea,
 } from "@/lib/aip/ifr-planning";
+import { isNotInAipArea } from "@/lib/aip/not-in-aip";
 import { activationLabel } from "@/lib/areas/activation";
 import {
+  applyDesignatorPolicy,
   areaOmitsLabel,
   isUasOnlyText,
   mergeEnrAcceptPreservingNoaiw,
@@ -468,7 +470,9 @@ export function Workspace() {
           a.exclusionReason !== "fir_border" &&
           a.exclusionReason !== "uas_only" &&
           a.exclusionReason !== "ifr_planning_only" &&
+          a.exclusionReason !== "not_in_aip" &&
           !isIfrPlanningOnlyArea(a) &&
+          !isNotInAipArea(a) &&
           (a.coordinates.length >= 3 || a.boundCircle),
       );
       setCandidates((prev) => mergeCandidateAreas(prev, drawable));
@@ -513,7 +517,9 @@ export function Workspace() {
           a.exclusionReason !== "fir_border" &&
           a.exclusionReason !== "uas_only" &&
           a.exclusionReason !== "ifr_planning_only" &&
+          a.exclusionReason !== "not_in_aip" &&
           !isIfrPlanningOnlyArea(a) &&
+          !isNotInAipArea(a) &&
           (a.coordinates.length >= 3 || a.boundCircle),
       );
       const catRows: SupCatalogueRow[] = data.catalogueSups || [];
@@ -602,7 +608,9 @@ export function Workspace() {
       candidate.section ??
       (candidate.provenance.source === "enr51" ? "other" : "tempo");
     // ENR Accept: preserve baseline noaiw for legacy permanent 4F without NOAIW.
-    const mergedEnr = mergeEnrAcceptPreservingNoaiw(candidate, existing);
+    const mergedEnr = applyDesignatorPolicy(
+      mergeEnrAcceptPreservingNoaiw(candidate, existing),
+    );
     let accepted: AreaRecord = {
       ...mergedEnr,
       section,
@@ -610,7 +618,10 @@ export function Workspace() {
       // Force full block rewrite on export (geometry / LIMITS / name).
       rawBlock: "",
       // Keep baseline LABEL coords; only invent for brand-new areas.
-      label: labelForAccept(mergedEnr, existing),
+      // Designator policy (e.g. R94 // NO LABEL) wins over baseline LABEL.
+      label: areaOmitsLabel(mergedEnr)
+        ? undefined
+        : labelForAccept(mergedEnr, existing),
     };
     if (accepted.boundCircle) {
       const red = redensifyBoundCircleAuto(accepted.boundCircle);
@@ -625,6 +636,10 @@ export function Workspace() {
 
   const acceptDiff = (item: DiffItem) => {
     if (item.status !== "new" && item.status !== "changed") return;
+    if (isNotInAipArea(item.candidate)) {
+      toast.error(`${item.candidate.id}: not present in AIP — excluded`);
+      return;
+    }
     if (isIfrPlanningOnlyArea(item.candidate)) {
       toast.error(`${item.candidate.id}: ${IFR_PLANNING_NOTE}`);
       return;

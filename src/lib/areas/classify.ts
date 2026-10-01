@@ -92,6 +92,28 @@ export function areaOmitsLabel(
   return OMIT_LABEL_IDS.has(id) || OMIT_LABEL_IDS.has(short);
 }
 
+/**
+ * Max policy overrides by designator.
+ * ESR94: AREA:3 + ACTIVE:1 + no LABEL (not AUP / not 4F).
+ */
+export function applyDesignatorPolicy(area: AreaRecord): AreaRecord {
+  const id = area.id.trim().toUpperCase();
+  const short = (area.shortName || "").trim().toUpperCase();
+  if (id === "ESR94" || short === "R94") {
+    return {
+      ...area,
+      id: "ESR94",
+      shortName: "R94",
+      areaTypeCode: "3",
+      noaiw: false,
+      directives: (area.directives || []).filter((d) => d.trim() !== "NOAIW"),
+      activation: { type: "ALWAYS" },
+      label: undefined,
+    };
+  }
+  return area;
+}
+
 /** Any UAS/UAV/BVLOS-style mention (subject or body) — informational, not auto-select. */
 export function mentionsUasActivity(text: string): boolean {
   return (

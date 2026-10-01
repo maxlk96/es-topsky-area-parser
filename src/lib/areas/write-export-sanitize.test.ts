@@ -14,6 +14,7 @@ import {
   mergeTempoSection,
   needsFullBlockRewrite,
   sanitizeExportedTopSkyText,
+  stripNotInAipBlocks,
   TEMPO_END_BANNER,
   TEMPO_START_BANNER,
 } from "./write-topsky";
@@ -74,6 +75,43 @@ describe("export TopSky validity", () => {
     expect(block).toMatch(/LABEL:N066\./);
     expect(block).toMatch(/^N0\d{2}\./m);
     expect(block).not.toMatch(/\.60\.000/);
+  });
+
+  it("stripNotInAipBlocks / sanitize remove ESR111 from export", () => {
+    const raw = `//ESR110 Huddinge
+AREA:3:  R110
+ACTIVE:1
+LIMITS:0:020
+N059.20.26.000 E017.52.30.000
+N059.20.24.879 E017.52.52.434
+N059.19.20.000 E017.52.30.000
+N059.20.26.000 E017.52.30.000
+
+//ESR111 SÖRENTORP
+AREA:3:  R111
+ACTIVE:1
+LIMITS:0:015
+BOUND:C:N059.23.48.000:E017.59.29.000:0.5
+N059.23.48.000 E017.59.29.000
+N059.23.48.000 E018.00.00.000
+N059.24.00.000 E018.00.00.000
+N059.23.48.000 E017.59.29.000
+
+//ESR112 VÄLLINGE
+AREA:4F:  R112
+ACTIVE:AUP:ESR112
+LIMITS:0:050
+N059.20.26.000 E017.52.30.000
+N059.20.24.879 E017.52.52.434
+N059.19.20.000 E017.52.30.000
+N059.20.26.000 E017.52.30.000
+`;
+    const stripped = stripNotInAipBlocks(raw);
+    expect(stripped).not.toMatch(/ESR111|R111/);
+    expect(stripped).toContain("//ESR110");
+    expect(stripped).toContain("//ESR112");
+    const sanitized = sanitizeExportedTopSkyText(raw);
+    expect(sanitized).not.toMatch(/ESR111|\bR111\b/);
   });
 
   it("sanitize strips trailing spaces and space-only lines", () => {
