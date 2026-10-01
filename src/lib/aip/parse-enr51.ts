@@ -136,12 +136,14 @@ export function parseEnr51Html(
 
     let coordinates = parseCoords(chunk);
     const boundCircle = parseCircle(chunk);
+    let circleSpacingDeg: number | undefined;
     if (boundCircle && coordinates.length < 3) {
+      circleSpacingDeg = defaultSpacingForRadius(boundCircle.radiusNm);
       coordinates = densifyCircle(
         boundCircle.lat,
         boundCircle.lon,
         boundCircle.radiusNm,
-        defaultSpacingForRadius(boundCircle.radiusNm),
+        circleSpacingDeg,
       );
     }
     if (coordinates.length < 3 && !boundCircle) continue;
@@ -225,6 +227,7 @@ export function parseEnr51Html(
       mapDefaultVisible: true,
       noaiw,
       boundCircle,
+      circleSpacingDeg,
       provenance: {
         source: "enr51",
         amdtId: meta.amdtId,

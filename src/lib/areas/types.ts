@@ -49,6 +49,8 @@ export interface AreaRecord {
   mapDefaultVisible: boolean;
   noaiw: boolean;
   boundCircle?: { lat: number; lon: number; radiusNm: number };
+  /** TopSky COORD_CIRCLE Spacing° used when densifying this circle ring (0.1–120). */
+  circleSpacingDeg?: number;
   provenance: AreaProvenance;
   exclusionReason?: string;
   /**

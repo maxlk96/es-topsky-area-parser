@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { parseCompactCoord, toTopSkyCoord, parseTopSkyCoordPair } from "./coords";
+import {
+  circleStepCount,
+  densifyCircle,
+  inferSpacingFromRing,
+  parseCompactCoord,
+  parseTopSkyCoordPair,
+  redensifyBoundCircle,
+  toTopSkyCoord,
+} from "./coords";
 
 describe("coords", () => {
   it("parses AIP compact to decimal", () => {
@@ -23,5 +31,18 @@ describe("coords", () => {
     const b = parseTopSkyCoordPair("N056.40.2.182:E012.33.36.559");
     expect(b).not.toBeNull();
     expect(b!.lat).toBeCloseTo(56 + 40 / 60 + 2.182 / 3600, 5);
+  });
+
+  it("densifies circles with even step counts (10° → 36+close)", () => {
+    const ring = densifyCircle(59.3, 17.8, 1.1, 10);
+    expect(circleStepCount(10)).toBe(36);
+    expect(ring.length).toBe(37); // closed
+    expect(inferSpacingFromRing(ring)).toBeCloseTo(10, 5);
+    const fine = redensifyBoundCircle(
+      { lat: 59.3, lon: 17.8, radiusNm: 1.1 },
+      5,
+    );
+    expect(fine.coordinates.length).toBe(73);
+    expect(fine.circleSpacingDeg).toBe(5);
   });
 });

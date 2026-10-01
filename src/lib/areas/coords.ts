@@ -104,6 +104,37 @@ export function ensureOuterRingCcw(ring: [number, number][]): [number, number][]
   return closeRing(open);
 }
 
+/** Common ESAA / TopSky Spacing° presets (vertex radial step). */
+export const CIRCLE_SPACING_PRESETS = [5, 10, 12, 15, 20, 30] as const;
+
+export function clampCircleSpacing(spacingDeg: number): number {
+  if (!Number.isFinite(spacingDeg)) return 10;
+  return Math.max(0.1, Math.min(120, spacingDeg));
+}
+
+/** Even step count from Spacing° so rings do not drift to 35/34 vertices. */
+export function circleStepCount(spacingDeg: number): number {
+  const spacing = clampCircleSpacing(spacingDeg);
+  return Math.max(3, Math.round(360 / spacing));
+}
+
+export function spacingFromSteps(steps: number): number {
+  const n = Math.max(3, Math.round(steps));
+  return clampCircleSpacing(360 / n);
+}
+
+/** Infer Spacing° from an existing densified ring (open or closed). */
+export function inferSpacingFromRing(coords: [number, number][]): number | undefined {
+  if (coords.length < 3) return undefined;
+  const [fLon, fLat] = coords[0];
+  const [lLon, lLat] = coords[coords.length - 1];
+  const closed =
+    Math.abs(fLon - lLon) < 1e-9 && Math.abs(fLat - lLat) < 1e-9;
+  const open = closed ? coords.length - 1 : coords.length;
+  if (open < 3) return undefined;
+  return spacingFromSteps(open);
+}
+
 /** Densify a full circle to lon/lat ring. Spacing in degrees (TopSky COORD_CIRCLE Spacing). */
 export function densifyCircle(
   lat: number,
@@ -111,13 +142,14 @@ export function densifyCircle(
   radiusNm: number,
   spacingDeg: number,
 ): [number, number][] {
-  const spacing = Math.max(0.1, Math.min(120, spacingDeg));
+  const nSteps = circleStepCount(spacingDeg);
+  const step = 360 / nSteps;
   const R_EARTH_NM = 3440.065;
   const latRad = (lat * Math.PI) / 180;
   const angular = radiusNm / R_EARTH_NM;
   const pts: [number, number][] = [];
-  for (let a = 0; a < 360 - 1e-9; a += spacing) {
-    const brng = (a * Math.PI) / 180;
+  for (let i = 0; i < nSteps; i++) {
+    const brng = ((i * step) * Math.PI) / 180;
     const destLat = Math.asin(
       Math.sin(latRad) * Math.cos(angular) +
         Math.cos(latRad) * Math.sin(angular) * Math.cos(brng),
@@ -133,11 +165,32 @@ export function densifyCircle(
   return closeRing(pts);
 }
 
-/** Heuristic Spacing° by radius NM (smaller → finer). */
+/**
+ * Heuristic Spacing° by radius NM — aligned to ESAA TopSkyAreas practice
+ * (most ~1–2 NM circles use 10° / 36 vertices; tiny often 15°).
+ */
 export function defaultSpacingForRadius(radiusNm: number): number {
+  if (radiusNm <= 0.7) return 15;
   if (radiusNm <= 1.5) return 10;
   if (radiusNm <= 3) return 12;
   if (radiusNm <= 8) return 15;
   if (radiusNm <= 20) return 20;
   return 30;
+}
+
+/** Re-build polygon ring for a circle area at a chosen Spacing°. */
+export function redensifyBoundCircle(
+  bound: { lat: number; lon: number; radiusNm: number },
+  spacingDeg: number,
+): { coordinates: [number, number][]; circleSpacingDeg: number } {
+  const circleSpacingDeg = clampCircleSpacing(spacingDeg);
+  return {
+    coordinates: densifyCircle(
+      bound.lat,
+      bound.lon,
+      bound.radiusNm,
+      circleSpacingDeg,
+    ),
+    circleSpacingDeg,
+  };
 }

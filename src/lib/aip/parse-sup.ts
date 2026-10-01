@@ -237,12 +237,14 @@ function buildAreaFromSection(
 
   let coordinates = parseCoordsFromChunk(section.chunk);
   const boundCircle = parseCircleFromChunk(section.chunk);
+  let circleSpacingDeg: number | undefined;
   if (boundCircle && coordinates.length < 3) {
+    circleSpacingDeg = defaultSpacingForRadius(boundCircle.radiusNm);
     coordinates = densifyCircle(
       boundCircle.lat,
       boundCircle.lon,
       boundCircle.radiusNm,
-      defaultSpacingForRadius(boundCircle.radiusNm),
+      circleSpacingDeg,
     );
   }
   if (coordinates.length < 3 && !boundCircle) return null;
@@ -289,6 +291,7 @@ function buildAreaFromSection(
     mapDefaultVisible: true,
     noaiw: inferred.noaiw,
     boundCircle,
+    circleSpacingDeg,
     provenance: {
       source: "sup",
       amdtId: meta.amdtId,

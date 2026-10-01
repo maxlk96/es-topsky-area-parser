@@ -3,7 +3,7 @@ import {
   designatorFromShort,
 } from "./classify";
 import { parseLimitsLine } from "./limits";
-import { parseTopSkyCoordPair } from "./coords";
+import { inferSpacingFromRing, parseTopSkyCoordPair } from "./coords";
 import {
   isDesignatorOnlyName,
   resolveAreaName,
@@ -119,6 +119,9 @@ export function parseTopSkyText(text: string, encoding = "latin1"): ParseResult 
       mapDefaultVisible,
       noaiw: cur.noaiw,
       boundCircle: cur.boundCircle,
+      circleSpacingDeg: cur.boundCircle
+        ? inferSpacingFromRing(cur.coords)
+        : undefined,
       provenance: {
         source: "topsky",
         rawComment: cur.commentName || undefined,
