@@ -400,7 +400,7 @@ export function Workspace() {
   };
 
   /**
-   * Reload ENR 5.1 permanent R/D + likely tempo SUPs from the selected AMDT,
+   * Reload ENR 5.1 published R/D + likely tempo SUPs from the selected AMDT,
    * then diff against the currently loaded TopSky baseline. Does not wipe
    * the working set (OTHER / unlabeled blocks stay until Accept).
    */
