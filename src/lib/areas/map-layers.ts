@@ -1,3 +1,4 @@
+import { isUasOnlyText } from "./classify";
 import type { AreaCategory, AreaRecord } from "./types";
 
 /**
@@ -14,19 +15,23 @@ export type LayerKey =
 
 export type LayerVisibility = Record<LayerKey, boolean>;
 
-/** Defaults per Max: only R and D on. */
+/**
+ * Defaults per Max: all area layers on.
+ * UAS/UAV/BVLOS-only areas stay off via exclusionReason / isUasOnlyArea
+ * (not via these toggles).
+ */
 export const DEFAULT_LAYER_VISIBILITY: LayerVisibility = {
   R: true,
   D: true,
-  P: false,
-  TRA: false,
-  CBA: false,
-  PCA: false,
-  PCA_SUB: false,
-  FS: false,
-  TCT: false,
-  STCA: false,
-  OTHER: false,
+  P: true,
+  TRA: true,
+  CBA: true,
+  PCA: true,
+  PCA_SUB: true,
+  FS: true,
+  TCT: true,
+  STCA: true,
+  OTHER: true,
 };
 
 export type LayerGroupId = "rd" | "tra_cba" | "pca" | "other";
@@ -75,7 +80,7 @@ export const LAYER_GROUPS: LayerGroup[] = [
   {
     id: "other",
     title: "Other / system",
-    hint: "Plugin / system volumes (off by default)",
+    hint: "Plugin / system volumes",
     toggles: [
       { key: "FS", label: "FS" },
       { key: "TCT", label: "TCT" },
@@ -144,10 +149,18 @@ export function layerKeyFor(area: AreaRecord): LayerKey {
   return area.category;
 }
 
+/** UAS/UAV/BVLOS-only — never shown/activated by default. */
+export function isUasOnlyArea(area: AreaRecord): boolean {
+  if (area.exclusionReason === "uas_only") return true;
+  const blob = `${area.provenance.rawComment ?? ""} ${area.name} ${area.id}`;
+  return isUasOnlyText(blob);
+}
+
 export function isLayerVisible(
   area: AreaRecord,
   visibility: LayerVisibility,
 ): boolean {
+  if (isUasOnlyArea(area)) return false;
   return visibility[layerKeyFor(area)] === true;
 }
 

@@ -83,13 +83,31 @@ describe("map-layers", () => {
     ).toBe("OTHER");
   });
 
-  it("defaults only R/D visible", () => {
+  it("defaults all layers visible except UAS-only", () => {
     const v: LayerVisibility = DEFAULT_LAYER_VISIBILITY;
     expect(isLayerVisible(stub({ category: "R", shortName: "R505" }), v)).toBe(true);
     expect(isLayerVisible(stub({ category: "D", shortName: "D309" }), v)).toBe(true);
     expect(
       isLayerVisible(
         stub({ category: "OTHER", shortName: "FSGGCIE", areaTypeCode: "2F" }),
+        v,
+      ),
+    ).toBe(true);
+    expect(
+      isLayerVisible(
+        stub({ category: "PCA", shortName: "A1", areaTypeCode: "T" }),
+        v,
+      ),
+    ).toBe(true);
+    expect(
+      isLayerVisible(
+        stub({
+          category: "R",
+          shortName: "R113",
+          name: "STOCKHOLM (UAV only)",
+          exclusionReason: "uas_only",
+          mapDefaultVisible: false,
+        }),
         v,
       ),
     ).toBe(false);

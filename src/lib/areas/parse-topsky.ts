@@ -2,6 +2,7 @@ import {
   areaOmitsLabel,
   classifyFromName,
   designatorFromShort,
+  isUasOnlyText,
 } from "./classify";
 import { parseLimitsLine } from "./limits";
 import { inferSpacingFromRing, parseTopSkyCoordPair } from "./coords";
@@ -62,12 +63,15 @@ export function parseTopSkyText(text: string, encoding = "latin1"): ParseResult 
 
   const flush = () => {
     if (!cur) return;
-    const { category, mapDefaultVisible } = classifyFromName(
+    const { category, mapDefaultVisible: defaultVisible } = classifyFromName(
       cur.areaType,
       cur.shortName,
       inTempo ? "tempo" : "other",
     );
     const id = designatorFromShort(cur.shortName);
+    const uasBlob = `${cur.commentName ?? ""} ${cur.shortName} ${id}`;
+    const uasOnly = isUasOnlyText(uasBlob);
+    const mapDefaultVisible = uasOnly ? false : defaultVisible;
     let activation: AreaRecord["activation"];
     const aup = cur.activationRaws.find((a) => a.startsWith("ACTIVE:AUP:"));
     const aupg = cur.activationRaws.find((a) => a.startsWith("ACTIVE:AUP_GROUP:"));
@@ -177,6 +181,7 @@ export function parseTopSkyText(text: string, encoding = "latin1"): ParseResult 
         rawComment: cur.commentName || undefined,
         ...(supNumber ? { supNumber, validTo } : {}),
       },
+      ...(uasOnly ? { exclusionReason: "uas_only" as const } : {}),
       needsReview,
       // Mark edited so whole-file LABEL patch runs on export for the corruption fix.
       nameEdited: resolved.fixedCorruption || undefined,
