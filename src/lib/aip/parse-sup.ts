@@ -42,8 +42,9 @@ type AreaSection = {
  * polygon in a multi-area SUP into one self-intersecting fill.
  */
 export function extractAreaSections(text: string): AreaSection[] {
+  // No trailing \b — in JS, Å/Ä/Ö are non-word chars so \b would cut "ORNÖ" to "ORN".
   const re =
-    /\b(ES[RD]\d{2,4}[A-Z]?)\s+([A-ZÅÄÖ][A-Za-zÅÄÖåäö0-9/-]{1,40})\b/gi;
+    /\b(ES[RD]\d{2,4}[A-Z]?)\s+([A-ZÅÄÖ][A-Za-zÅÄÖåäö0-9/-]{1,40})(?=[\s.,;:]|$)/gi;
   const hits = [...text.matchAll(re)];
   const found: AreaSection[] = [];
   for (let i = 0; i < hits.length; i++) {
