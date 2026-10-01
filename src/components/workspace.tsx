@@ -673,11 +673,25 @@ export function Workspace() {
       toast.error("Load a baseline first");
       return;
     }
-    // Tempo merge → rewrite accepted permanent ENR/AIP blocks → label/name nudges.
+    // Tempo merge (incl. SUP Valid-to / EXCLUDED stubs) → accepted permanent ENR blocks → label/name.
+    const excludedStubs = [
+      ...areas.filter((a) => a.exclusionReason === "uas_only"),
+      ...diffs
+        .filter(
+          (d) =>
+            d.status === "excluded" &&
+            d.candidate.exclusionReason === "uas_only" &&
+            !!d.candidate.provenance.supNumber,
+        )
+        .map((d) => d.candidate),
+    ];
     const merged = sanitizeExportedTopSkyText(
       applyNameEdits(
         applyLabelEdits(
-          applyAcceptedAreaBlocks(mergeTempoSection(rawText, areas), areas),
+          applyAcceptedAreaBlocks(
+            mergeTempoSection(rawText, areas, { excludedStubs }),
+            areas,
+          ),
           areas,
         ),
         areas,

@@ -3,11 +3,39 @@ import { toTopSkyCoord } from "./coords";
 import {
   applyAcceptedAreaBlocks,
   formatAreaBlock,
+  formatExcludedSupStub,
   formatLabelLine,
+  formatSupNumberShort,
+  formatSupValidityLine,
+  formatTempoAreaBlocks,
+  mergeTempoSection,
   needsFullBlockRewrite,
   sanitizeExportedTopSkyText,
 } from "./write-topsky";
 import type { AreaRecord } from "./types";
+
+function tempoArea(partial: Partial<AreaRecord> & Pick<AreaRecord, "id" | "shortName" | "name">): AreaRecord {
+  return {
+    category: "R",
+    areaTypeCode: "4F",
+    coordinates: [
+      [14.1, 58.5],
+      [14.2, 58.5],
+      [14.2, 58.6],
+      [14.1, 58.5],
+    ],
+    limits: [0, 40],
+    activation: { type: "AUP", key: partial.id },
+    directives: ["NOAIW"],
+    label: { lat: 58.55, lon: 14.15, text: partial.name },
+    mapDefaultVisible: true,
+    noaiw: true,
+    provenance: { source: "sup", supNumber: "182/2025", validTo: "31 AUG 2026" },
+    rawBlock: "",
+    section: "tempo",
+    ...partial,
+  };
+}
 
 describe("export TopSky validity", () => {
   it("formatAreaBlock uses Nddd pad and never seconds=60", () => {
@@ -126,5 +154,71 @@ N055.39.02.000 E013.05.53.000
       section: "other",
     };
     expect(needsFullBlockRewrite(area)).toBe(false);
+  });
+
+  it("shortens SUP numbers and formats Valid-to / EXCLUDED stubs", () => {
+    expect(formatSupNumberShort("182/2025")).toBe("182/25");
+    expect(formatSupNumberShort("182/25")).toBe("182/25");
+    const a = tempoArea({ id: "ESR797", shortName: "R797", name: "MOHOLM" });
+    expect(formatSupValidityLine(a)).toBe("// 182/25 - Valid to 31 AUG 2026");
+    expect(formatExcludedSupStub({
+      ...a,
+      exclusionReason: "uas_only",
+      provenance: { source: "sup", supNumber: "197/2025", validTo: "31 AUG 2026" },
+    })).toBe("// 197/25 - Valid to 31 AUG 2026\n// EXCLUDED. ONLY UAS (BVLOS)\n");
+  });
+
+  it("groups rewritten SUP areas under one Valid-to header", () => {
+    const a = tempoArea({ id: "ESR797", shortName: "R797", name: "MOHOLM" });
+    const b = tempoArea({ id: "ESR798", shortName: "R798", name: "OTHER" });
+    const out = formatTempoAreaBlocks([a, b]);
+    expect(out.match(/\/\/ 182\/25 - Valid to 31 AUG 2026/g)).toHaveLength(1);
+    expect(out).toContain("//ESR797 MOHOLM");
+    expect(out).toContain("//ESR798 OTHER");
+    expect(out.indexOf("Valid to")).toBeLessThan(out.indexOf("//ESR797"));
+  });
+
+  it("mergeTempoSection emits Valid-to for accepted SUP and keeps EXCLUDED stubs", () => {
+    const file = `//ESR24 DROTTNINGHOLM
+AREA:3:  R24
+LIMITS:0:20
+ACTIVE:1
+N059.20.26.000 E017.52.30.000
+
+//      START OF TEMPO R AND D AREAS
+// 280/25 - Valid to 31 AUG 2026
+// EXCLUDED. ONLY UAS (BVLOS)
+
+//      END OF TEMPO R AND D AREAS
+`;
+    const accepted = tempoArea({
+      id: "ESR797",
+      shortName: "R797",
+      name: "MOHOLM",
+      rawBlock: "",
+      provenance: { source: "sup", supNumber: "182/2025", validTo: "31 AUG 2026" },
+    });
+    const out = mergeTempoSection(file, [accepted], {
+      now: new Date("2026-06-01T12:00:00Z"),
+    });
+    expect(out).toContain("// 182/25 - Valid to 31 AUG 2026");
+    expect(out).toContain("//ESR797 MOHOLM");
+    expect(out).toContain("// 280/25 - Valid to 31 AUG 2026");
+    expect(out).toContain("// EXCLUDED. ONLY UAS (BVLOS)");
+  });
+
+  it("sanitize rewrites legacy seconds=60, pads Nddd, cleans LABEL junk", () => {
+    const raw = [
+      "LABEL:N66.55.55.000:E017.55.60.000:TJÅMOTIS",
+      "LABEL:N058.55.23.000:E017.58.04.000:NYN<äSHAMN",
+      "N58.39.26.000 E015.24.60.000",
+      "N64.46.04.000 E018.42.60.000",
+    ].join("\n");
+    const out = sanitizeExportedTopSkyText(raw);
+    expect(out).not.toMatch(/\.60\.000/);
+    expect(out).not.toMatch(/NYN</);
+    expect(out).toContain("NYNÄSHAMN");
+    expect(out).toMatch(/LABEL:N066\./);
+    expect(out).toMatch(/^N058\./m);
   });
 });

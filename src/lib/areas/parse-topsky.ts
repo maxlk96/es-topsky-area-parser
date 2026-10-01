@@ -105,6 +105,21 @@ export function parseTopSkyText(text: string, encoding = "latin1"): ParseResult 
       rawBlock = patchNameInBlock(rawBlock, id, resolved.name, label);
     }
 
+    // Tempo SUP header: `// 182/25 - Valid to 31 AUG 2026` (kept in rawBlock; also
+    // on provenance so Accept/rewrite can re-emit the same convention).
+    let supNumber: string | undefined;
+    let validTo: string | undefined;
+    for (const raw of cur.lines) {
+      const m = raw
+        .trim()
+        .match(/^\/\/\s*(\d+)\s*\/\s*(\d+)\s*-\s*Valid to\s+(.+)$/i);
+      if (m) {
+        supNumber = `${m[1]}/${m[2]}`;
+        validTo = m[3].trim();
+        break;
+      }
+    }
+
     areas.push({
       id,
       shortName,
@@ -125,6 +140,7 @@ export function parseTopSkyText(text: string, encoding = "latin1"): ParseResult 
       provenance: {
         source: "topsky",
         rawComment: cur.commentName || undefined,
+        ...(supNumber ? { supNumber, validTo } : {}),
       },
       needsReview,
       // Mark edited so whole-file LABEL patch runs on export for the corruption fix.

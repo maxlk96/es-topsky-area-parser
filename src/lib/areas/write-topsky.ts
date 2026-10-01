@@ -1,4 +1,4 @@
-import { toTopSkyCoord, closeRing } from "./coords";
+import { closeRing, parseTopSkyCoordPair, toTopSkyCoord } from "./coords";
 import { formatLimits } from "./limits";
 import type { AreaLabel, AreaRecord } from "./types";
 import { isExpired } from "./validity";
@@ -152,7 +152,8 @@ export function applyAcceptedAreaBlocks(
 
   for (const area of toWrite) {
     const found = findAreaBlock(text, area);
-    const block = formatAreaBlock(area).trimEnd() + "\n";
+    // Permanent ENR section: no SUP Valid-to headers.
+    const block = formatAreaBlock(area, { includeSupHeader: false }).trimEnd() + "\n";
     if (!found) {
       missing.push(area);
       continue;
@@ -164,7 +165,10 @@ export function applyAcceptedAreaBlocks(
   }
 
   if (missing.length) {
-    const insertBlocks = missing.map((a) => formatAreaBlock(a).trimEnd()).join("\n\n") + "\n\n";
+    const insertBlocks =
+      missing
+        .map((a) => formatAreaBlock(a, { includeSupHeader: false }).trimEnd())
+        .join("\n\n") + "\n\n";
     const tempoMark = text.indexOf("START OF TEMPO R AND D AREAS");
     if (tempoMark >= 0) {
       const lineStart = text.lastIndexOf("\n", tempoMark) + 1;
@@ -177,8 +181,68 @@ export function applyAcceptedAreaBlocks(
   return text;
 }
 
-export function formatAreaBlock(area: AreaRecord): string {
+/** ESAA tempo convention: `182/2025` → `182/25`. */
+export function formatSupNumberShort(supNumber: string): string {
+  const m = String(supNumber).match(/(\d+)\s*[/-]\s*(\d+)/);
+  if (!m) return String(supNumber).trim();
+  const a = Number(m[1]);
+  const b = Number(m[2]);
+  if (b >= 2000) return `${a}/${String(b).slice(-2)}`;
+  if (a >= 2000) return `${b}/${String(a).slice(-2)}`;
+  return `${a}/${b}`;
+}
+
+/** `// 182/25 - Valid to 31 AUG 2026` */
+export function formatSupValidityLine(area: AreaRecord): string | undefined {
+  const sup = area.provenance.supNumber;
+  const validTo = area.provenance.validTo?.trim();
+  if (!sup || !validTo) return undefined;
+  return `// ${formatSupNumberShort(sup)} - Valid to ${validTo}`;
+}
+
+/** UAS stub: validity line + `// EXCLUDED. ONLY UAS (BVLOS)`. */
+export function formatExcludedSupStub(area: AreaRecord): string {
   const lines: string[] = [];
+  const validity = formatSupValidityLine(area);
+  if (validity) lines.push(validity);
+  else if (area.provenance.supNumber) {
+    lines.push(`// ${formatSupNumberShort(area.provenance.supNumber)}`);
+  }
+  lines.push("// EXCLUDED. ONLY UAS (BVLOS)");
+  lines.push("");
+  return lines.join("\n");
+}
+
+/** Pull existing EXCLUDED stubs from a tempo section (preserve on rewrite). */
+export function extractExcludedStubsFromTempo(tempoText: string): string[] {
+  const re =
+    /\/\/\s*(\d+\/\d+)\s*-\s*Valid to[^\n]*\n\/\/\s*EXCLUDED\. ONLY UAS[^\n]*/gi;
+  const out: string[] = [];
+  for (const m of tempoText.matchAll(re)) {
+    out.push(`${m[0].replace(/\s+$/g, "")}\n`);
+  }
+  return out;
+}
+
+export function formatAreaBlock(
+  area: AreaRecord,
+  opts?: { includeSupHeader?: boolean },
+): string {
+  const includeSupHeader = opts?.includeSupHeader !== false;
+  const lines: string[] = [];
+  if (includeSupHeader) {
+    const validity = formatSupValidityLine(area);
+    if (validity) lines.push(validity);
+    // ESAA: comment when SUP area has no AUP activation line
+    if (
+      area.provenance.supNumber &&
+      (area.activation?.type === "MANUAL" ||
+        area.activation?.type === "NONE" ||
+        !area.activation)
+    ) {
+      lines.push("// NO AUP ACTIVATION");
+    }
+  }
   const designator = area.id.toUpperCase();
   const labelText = toTopSkyName(area.label?.text || area.name);
   lines.push(`//${designator} ${labelText}`);
@@ -215,6 +279,82 @@ export function formatAreaBlock(area: AreaRecord): string {
   return lines.join("\n");
 }
 
+/** Group rewritten SUP areas so one `// NNN/YY - Valid to` heads the group. */
+export function formatTempoAreaBlocks(areas: AreaRecord[]): string {
+  const groups = new Map<string, AreaRecord[]>();
+  const order: string[] = [];
+  for (const a of areas) {
+    const key = a.provenance.supNumber
+      ? `sup:${formatSupNumberShort(a.provenance.supNumber)}`
+      : `id:${a.id.toUpperCase()}`;
+    if (!groups.has(key)) {
+      groups.set(key, []);
+      order.push(key);
+    }
+    groups.get(key)!.push(a);
+  }
+  const chunks: string[] = [];
+  for (const key of order) {
+    const group = groups.get(key)!;
+    const first = group[0]!;
+    if (first.provenance.supNumber) {
+      const validity = formatSupValidityLine(first);
+      if (validity) chunks.push(validity);
+      const noAup = group.every(
+        (a) =>
+          a.activation?.type === "MANUAL" ||
+          a.activation?.type === "NONE" ||
+          !a.activation,
+      );
+      if (noAup) chunks.push("// NO AUP ACTIVATION");
+      if (validity || noAup) chunks.push("");
+    }
+    for (const a of group) {
+      chunks.push(formatAreaBlock(a, { includeSupHeader: false }).trimEnd());
+      chunks.push("");
+    }
+  }
+  return chunks.join("\n");
+}
+
+/** Rewrite a space-form coord or LABEL line that still has seconds=60 / unpadded Ndd. */
+function sanitizeCoordBearingLine(line: string): string {
+  const trimmed = line.trim();
+  if (/^LABEL:/i.test(trimmed)) {
+    const parts = trimmed.split(":");
+    if (parts.length >= 4) {
+      const text = toTopSkyName(parts.slice(3).join(":"));
+      const pair = parseTopSkyCoordPair(`${parts[1]} ${parts[2]}`);
+      if (pair) {
+        const [latTok, lonTok] = toTopSkyCoord(pair.lat, pair.lon).split(" ");
+        return `LABEL:${latTok}:${lonTok}:${text}`;
+      }
+      // Coords odd but text junk (e.g. NYN<äSHAMN) — still clean the name.
+      if (text !== parts.slice(3).join(":")) {
+        return `LABEL:${parts[1]}:${parts[2]}:${text}`;
+      }
+    }
+    return line;
+  }
+  // Plain vertex: Nddd.mm.ss.mmm Eddd.mm.ss.mmm
+  if (/^[NS]\d/i.test(trimmed) && /\s+[EW]\d/i.test(trimmed)) {
+    const pair = parseTopSkyCoordPair(trimmed);
+    if (pair) return toTopSkyCoord(pair.lat, pair.lon);
+  }
+  // BOUND:C:lat:lon:radius — fix centre tokens only
+  if (/^BOUND:C:/i.test(trimmed)) {
+    const parts = trimmed.split(":");
+    if (parts.length >= 5) {
+      const pair = parseTopSkyCoordPair(`${parts[2]} ${parts[3]}`);
+      if (pair) {
+        const [latTok, lonTok] = toTopSkyCoord(pair.lat, pair.lon).split(" ");
+        return `BOUND:C:${latTok}:${lonTok}:${parts.slice(4).join(":")}`;
+      }
+    }
+  }
+  return line;
+}
+
 /**
  * Final pass before download: trim EOL spaces, drop whitespace-only lines,
  * and rewrite any LABEL/coord lines that still contain seconds=60 (legacy).
@@ -223,12 +363,13 @@ export function sanitizeExportedTopSkyText(text: string): string {
   const lines = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
   const out: string[] = [];
   for (const raw of lines) {
-    const line = raw.replace(/[ \t]+$/g, "");
+    let line = raw.replace(/[ \t]+$/g, "");
     if (line.length === 0) {
       // Keep true blank separators; drop space-only lines.
       if (raw.length === 0) out.push("");
       continue;
     }
+    line = sanitizeCoordBearingLine(line);
     out.push(line);
   }
   // Collapse runs of >2 blank lines
@@ -253,66 +394,114 @@ const TEMPO_END = "//      END OF TEMPO R AND D AREAS";
 export function mergeTempoSection(
   originalText: string,
   workingAreas: AreaRecord[],
-  opts?: { now?: Date },
+  opts?: { now?: Date; excludedStubs?: AreaRecord[] },
 ): string {
   const now = opts?.now ?? new Date();
   const text = originalText.replace(/\r\n/g, "\n");
   const startIdx = text.indexOf("START OF TEMPO R AND D AREAS");
   const endIdx = text.indexOf("END OF TEMPO R AND D AREAS");
-  if (startIdx < 0 || endIdx < 0 || endIdx < startIdx) {
-    // append tempo section
-    const tempoBlocks = workingAreas
-      .filter((a) => a.section === "tempo" || a.provenance.source === "sup" || a.provenance.source === "notam")
-      .filter((a) => !isExpired(a, now))
-      .map(formatAreaBlock)
-      .join("\n");
-    return sanitizeExportedTopSkyText(
-      `${text.trimEnd()}\n\n${TEMPO_START}\n${tempoBlocks}${TEMPO_END}\n`,
-    );
-  }
-
-  // Find line starts
-  const before = text.slice(0, text.lastIndexOf("\n", startIdx) + 1);
-  const afterStartLine = text.indexOf("\n", startIdx);
-  const endLineStart = text.lastIndexOf("\n", endIdx) + 1;
-  const after = text.slice(text.indexOf("\n", endIdx) + 1);
 
   const tempoAreas = workingAreas.filter(
     (a) =>
+      a.exclusionReason !== "uas_only" &&
       (a.section === "tempo" ||
         a.provenance.source === "sup" ||
         a.provenance.source === "notam" ||
         a.provenance.source === "topsky") &&
-      (a.category === "R" || a.category === "D") &&
-      a.mapDefaultVisible,
+      (a.category === "R" || a.category === "D"),
+  );
+  const inTempo = workingAreas.filter(
+    (a) =>
+      a.section === "tempo" &&
+      !isExpired(a, now) &&
+      a.exclusionReason !== "uas_only",
+  );
+  const activeTempo = (
+    inTempo.length ? inTempo : tempoAreas.filter((a) => !isExpired(a, now) && a.mapDefaultVisible)
   );
 
-  // Prefer areas explicitly marked tempo, else those that were in tempo section
-  const inTempo = workingAreas.filter((a) => a.section === "tempo" && !isExpired(a, now));
+  const preserved: AreaRecord[] = [];
+  const rewritten: AreaRecord[] = [];
+  for (const a of activeTempo) {
+    if (!needsFullBlockRewrite(a) && a.rawBlock) preserved.push(a);
+    else rewritten.push(a);
+  }
 
-  const blocks = (inTempo.length ? inTempo : tempoAreas.filter((a) => !isExpired(a, now)))
+  const preservedBlocks = preserved
     .map((a) => {
-      // Untouched baseline tempo: keep rawBlock (optional label/name patch).
-      if (!needsFullBlockRewrite(a) && a.rawBlock) {
-        let block = a.rawBlock;
-        if (a.nameEdited) {
-          block = patchNameInBlock(block, a.id, a.name, a.label);
-        } else if (a.labelEdited && a.label) {
-          // Patch LABEL only — never insert if the baseline block had none.
-          block = patchLabelInBlock(block, a.label);
-        }
-        return block.trimEnd() + "\n";
+      let block = a.rawBlock;
+      if (a.nameEdited) {
+        block = patchNameInBlock(block, a.id, a.name, a.label);
+      } else if (a.labelEdited && a.label) {
+        block = patchLabelInBlock(block, a.label);
       }
-      // Accepted SUP / cleared rawBlock → full rewrite (geometry + LIMITS + name).
-      return formatAreaBlock(a);
+      return block.trimEnd() + "\n";
     })
     .join("\n");
 
-  void before;
-  void afterStartLine;
-  void endLineStart;
-  void after;
+  const rewrittenBlocks = formatTempoAreaBlocks(rewritten);
 
+  // EXCLUDED stubs: new from scan/diffs + untouched stubs from original tempo.
+  const excludedFromWork = [
+    ...workingAreas.filter((a) => a.exclusionReason === "uas_only"),
+    ...(opts?.excludedStubs ?? []),
+  ];
+
+  let originalTempo = "";
+  if (startIdx >= 0 && endIdx > startIdx) {
+    originalTempo = text.slice(startIdx, endIdx);
+  }
+  const preservedExcluded = extractExcludedStubsFromTempo(originalTempo).filter(
+    (stub) => {
+      const m = stub.match(/\/\/\s*(\d+\/\d+)\s*-/i);
+      if (!m) return true;
+      const key = m[1];
+      // Replaced by a newly emitted excluded stub for the same SUP.
+      const hasNew = excludedFromWork.some(
+        (a) =>
+          a.provenance.supNumber &&
+          formatSupNumberShort(a.provenance.supNumber) === key,
+      );
+      if (hasNew) return false;
+      // SUP now has active areas — drop the old EXCLUDED stub.
+      const becameActive = activeTempo.some(
+        (a) =>
+          a.provenance.supNumber &&
+          formatSupNumberShort(a.provenance.supNumber) === key,
+      );
+      return !becameActive;
+    },
+  );
+
+  // Dedupe new excluded stubs by SUP short number
+  const seenEx = new Set<string>();
+  const newExcludedBlocks: string[] = [];
+  for (const a of excludedFromWork) {
+    const key = a.provenance.supNumber
+      ? formatSupNumberShort(a.provenance.supNumber)
+      : a.id;
+    if (seenEx.has(key)) continue;
+    seenEx.add(key);
+    newExcludedBlocks.push(formatExcludedSupStub(a).trimEnd() + "\n");
+  }
+
+  const blocks = [
+    preservedBlocks,
+    rewrittenBlocks,
+    ...newExcludedBlocks,
+    ...preservedExcluded.map((s) => s.trimEnd() + "\n"),
+  ]
+    .filter((b) => b && b.trim())
+    .join("\n");
+
+  if (startIdx < 0 || endIdx < 0 || endIdx < startIdx) {
+    return sanitizeExportedTopSkyText(
+      `${text.trimEnd()}\n\n${TEMPO_START}\n${blocks}\n${TEMPO_END}\n`,
+    );
+  }
+
+  const afterStartLine = text.indexOf("\n", startIdx);
+  const endLineStart = text.lastIndexOf("\n", endIdx) + 1;
   const head = text.slice(0, afterStartLine + 1);
   const tail = text.slice(endLineStart);
   return sanitizeExportedTopSkyText(`${head}\n${blocks}\n${tail}`);

@@ -81,6 +81,9 @@ describe("parseTopSkyText", () => {
     expect(d309!.section).toBe("tempo");
     expect(d309!.coordinates.length).toBeGreaterThanOrEqual(4);
     expect(d309!.name).toBe("ARGUS");
+    expect(d309!.provenance.supNumber).toBe("299/25");
+    expect(d309!.provenance.validTo).toBe("31 DEC 2026");
+    expect(d309!.rawBlock).toMatch(/\/\/ 299\/25 - Valid to 31 DEC 2026/);
     expect(r24!.areaTypeCode).toBe("3");
     expect(r24!.noaiw).toBe(false);
     expect(r24!.mapDefaultVisible).toBe(true);
