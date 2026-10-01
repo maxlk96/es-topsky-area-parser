@@ -32,8 +32,8 @@ type Props = {
   areas: AreaRecord[];
   candidates?: AreaRecord[];
   focusId?: string | null;
-  /** Designator ids (e.g. ESR791) — fit map to matching base/candidate polygons. */
-  fitAreaIds?: string[] | null;
+  /** Increments on explicit focus clicks — hover must not reuse an old focusId to pan. */
+  focusToken?: number;
   hoverKey?: HoverKey;
   selectedKey?: string | null;
   onHoverKey?: (key: string | null) => void;
@@ -272,7 +272,7 @@ export function AreaMap({
   areas,
   candidates = [],
   focusId,
-  fitAreaIds = null,
+  focusToken = 0,
   hoverKey = null,
   selectedKey = null,
   onHoverKey,
@@ -383,24 +383,15 @@ export function AreaMap({
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !focusId) return;
+    if (!map || !focusId || !focusToken) return;
+    const { visible: v, candidates: c } = latestRef.current;
     const hit =
-      visible.find((a) => a.id === focusId) ||
-      candidates.find((a) => a.id === focusId);
+      v.find((a) => a.id === focusId) || c.find((a) => a.id === focusId);
     if (!hit || hit.coordinates.length < 1) return;
     fitAreas(map, [hit]);
     onSelectRef.current?.(areaFeatureId(hit));
-  }, [focusId, visible, candidates]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !fitAreaIds?.length) return;
-    const want = new Set(fitAreaIds.map((id) => id.toUpperCase()));
-    const hits = [...candidates, ...visible].filter((a) =>
-      want.has(a.id.toUpperCase()),
-    );
-    fitAreas(map, hits);
-  }, [fitAreaIds, visible, candidates]);
+    // Only pan when focusToken bumps (explicit click) — not on hover/data refresh.
+  }, [focusToken, focusId]);
 
   // Label placer: only areas that already have a LABEL (never invent).
   useEffect(() => {

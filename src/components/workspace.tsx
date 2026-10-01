@@ -115,13 +115,22 @@ export function Workspace() {
     DEFAULT_LAYER_VISIBILITY,
   );
   const [focusId, setFocusId] = useState<string | null>(null);
-  const [fitAreaIds, setFitAreaIds] = useState<string[] | null>(null);
   const [hoverKey, setHoverKey] = useState<HoverKey>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [supViewer, setSupViewer] = useState<SupViewer | null>(null);
   const [labelPlacer, setLabelPlacer] = useState(false);
+  const [layersOpen, setLayersOpen] = useState(true);
   const supDwellTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Bumps only on explicit focus requests so hover re-highlights do not pan. */
+  const focusSeq = useRef(0);
+  const [focusToken, setFocusToken] = useState(0);
+
+  const requestFocus = useCallback((areaId: string) => {
+    focusSeq.current += 1;
+    setFocusToken(focusSeq.current);
+    setFocusId(areaId);
+  }, []);
 
   const cancelSupDwell = useCallback(() => {
     if (supDwellTimer.current) {
@@ -341,20 +350,56 @@ export function Workspace() {
   };
 
   const acceptDiff = (item: DiffItem) => {
-    if (item.status === "excluded" || item.status === "duplicate_of_sup") return;
-    if (item.status === "present") return;
-    const next = [...areas];
-    const idx = next.findIndex((a) => a.id.toUpperCase() === item.candidate.id.toUpperCase());
-    const accepted: AreaRecord = {
-      ...item.candidate,
-      section: "tempo",
-      mapDefaultVisible: true,
-    };
-    if (idx >= 0) next[idx] = accepted;
-    else next.unshift(accepted);
-    setAreas(next);
+    if (item.status !== "new" && item.status !== "changed") return;
+    setAreas((prev) => {
+      const next = [...prev];
+      const idx = next.findIndex(
+        (a) => a.id.toUpperCase() === item.candidate.id.toUpperCase(),
+      );
+      const accepted: AreaRecord = {
+        ...item.candidate,
+        section: "tempo",
+        mapDefaultVisible: true,
+      };
+      if (idx >= 0) next[idx] = accepted;
+      else next.unshift(accepted);
+      return next;
+    });
     setDiffs((d) => d.filter((x) => x.candidate.id !== item.candidate.id));
     toast.success(`Accepted ${item.candidate.id}`);
+  };
+
+  const acceptAllDiffs = () => {
+    const acceptable = diffs.filter(
+      (d) => d.status === "new" || d.status === "changed",
+    );
+    if (!acceptable.length) {
+      toast.message("No new/changed candidates to accept");
+      return;
+    }
+    setAreas((prev) => {
+      const next = [...prev];
+      for (const item of acceptable) {
+        const idx = next.findIndex(
+          (a) => a.id.toUpperCase() === item.candidate.id.toUpperCase(),
+        );
+        const accepted: AreaRecord = {
+          ...item.candidate,
+          section: "tempo",
+          mapDefaultVisible: true,
+        };
+        if (idx >= 0) next[idx] = accepted;
+        else next.unshift(accepted);
+      }
+      return next;
+    });
+    const acceptedIds = new Set(
+      acceptable.map((d) => d.candidate.id.toUpperCase()),
+    );
+    setDiffs((d) =>
+      d.filter((x) => !acceptedIds.has(x.candidate.id.toUpperCase())),
+    );
+    toast.success(`Accepted ${acceptable.length} area(s)`);
   };
 
   const onLabelMove = useCallback((fid: string, lat: number, lon: number) => {
@@ -510,14 +555,12 @@ export function Workspace() {
                           areas,
                           candidates,
                         );
+                        // Highlight only — do not autopan on hover.
                         if (!related.length) {
-                          const ids = designatorsFromText(s.subject);
                           setHoverKey(null);
-                          if (ids.length) setFitAreaIds(ids);
                           return;
                         }
                         setHoverKey(related.map(areaFeatureId));
-                        setFitAreaIds(related.map((a) => a.id));
                       }}
                       onMouseLeave={() => setHoverKey(null)}
                     >
@@ -550,7 +593,7 @@ export function Workspace() {
             areas={areas}
             candidates={candidates}
             focusId={focusId}
-            fitAreaIds={fitAreaIds}
+            focusToken={focusToken}
             hoverKey={hoverKey}
             selectedKey={selectedKey}
             onHoverKey={setHoverKey}
@@ -633,67 +676,81 @@ export function Workspace() {
               </p>
             )}
           </div>
-          <div className="max-h-[36%] space-y-2 overflow-y-auto rounded-md border border-slate-200 bg-white px-2 py-2">
-            <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
-              Map layers
-            </p>
-            {LAYER_GROUPS.map((group) => {
-              const gState = groupToggleState(group, layerVisibility);
-              const groupCount = group.toggles.reduce(
-                (n, t) => n + (counts[t.key] ?? 0),
-                0,
-              );
-              return (
-                <div
-                  key={group.id}
-                  className="rounded border border-slate-100 bg-slate-50/80 px-2 py-1.5"
-                >
-                  <div className="mb-1 flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="text-xs font-semibold text-slate-800">
-                        {group.title}{" "}
-                        <span className="font-normal text-slate-400">
-                          ({groupCount})
-                        </span>
-                      </p>
-                      <p className="text-[10px] leading-snug text-slate-500">
-                        {group.hint}
-                      </p>
-                    </div>
-                    <Checkbox
-                      checked={gState === "all"}
-                      indeterminate={gState === "some"}
-                      onCheckedChange={(value) =>
-                        setGroupVisible(group, value === true)
-                      }
-                      aria-label={`Show group ${group.title}`}
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-x-3 gap-y-1">
-                    {group.toggles.map(({ key, label }) => (
-                      <div
-                        key={key}
-                        className="flex items-center justify-between gap-2"
-                      >
-                        <span className="text-xs text-slate-700">
-                          {label}{" "}
-                          <span className="text-slate-400">
-                            ({counts[key] ?? 0})
-                          </span>
-                        </span>
+          <div className="rounded-md border border-slate-200 bg-white px-2 py-2">
+            <button
+              type="button"
+              className="flex w-full items-center justify-between gap-2 text-left"
+              onClick={() => setLayersOpen((o) => !o)}
+              aria-expanded={layersOpen}
+            >
+              <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
+                Map layers
+              </p>
+              <span className="text-slate-500" aria-hidden>
+                {layersOpen ? "▼" : "▶"}
+              </span>
+            </button>
+            {layersOpen && (
+              <div className="mt-2 max-h-[28vh] space-y-2 overflow-y-auto">
+                {LAYER_GROUPS.map((group) => {
+                  const gState = groupToggleState(group, layerVisibility);
+                  const groupCount = group.toggles.reduce(
+                    (n, t) => n + (counts[t.key] ?? 0),
+                    0,
+                  );
+                  return (
+                    <div
+                      key={group.id}
+                      className="rounded border border-slate-100 bg-slate-50/80 px-2 py-1.5"
+                    >
+                      <div className="mb-1 flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-xs font-semibold text-slate-800">
+                            {group.title}{" "}
+                            <span className="font-normal text-slate-400">
+                              ({groupCount})
+                            </span>
+                          </p>
+                          <p className="text-[10px] leading-snug text-slate-500">
+                            {group.hint}
+                          </p>
+                        </div>
                         <Checkbox
-                          checked={layerVisibility[key] === true}
+                          checked={gState === "all"}
+                          indeterminate={gState === "some"}
                           onCheckedChange={(value) =>
-                            setLayerVisible(key, value === true)
+                            setGroupVisible(group, value === true)
                           }
-                          aria-label={`Show ${label} on map`}
+                          aria-label={`Show group ${group.title}`}
                         />
                       </div>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
+                      <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+                        {group.toggles.map(({ key, label }) => (
+                          <div
+                            key={key}
+                            className="flex items-center justify-between gap-2"
+                          >
+                            <span className="text-xs text-slate-700">
+                              {label}{" "}
+                              <span className="text-slate-400">
+                                ({counts[key] ?? 0})
+                              </span>
+                            </span>
+                            <Checkbox
+                              checked={layerVisibility[key] === true}
+                              onCheckedChange={(value) =>
+                                setLayerVisible(key, value === true)
+                              }
+                              aria-label={`Show ${label} on map`}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
           <Input
             placeholder="Filter id / name…"
@@ -720,7 +777,7 @@ export function Workspace() {
                     }`}
                     onClick={() => {
                       setSelectedKey(fid);
-                      setFocusId(a.id);
+                      requestFocus(a.id);
                     }}
                     onMouseEnter={() => setHoverKey(fid)}
                     onMouseLeave={() => setHoverKey(null)}
@@ -747,9 +804,24 @@ export function Workspace() {
             </ul>
           </ScrollArea>
 
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-            Verify / diff
-          </p>
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+              Verify / diff
+            </p>
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              className="h-7 px-2 text-xs"
+              disabled={
+                !diffs.some((d) => d.status === "new" || d.status === "changed")
+              }
+              onClick={acceptAllDiffs}
+              title="Accept all new and changed candidates"
+            >
+              Accept all
+            </Button>
+          </div>
           <ScrollArea className="min-h-0 flex-1 rounded-md border border-slate-200 bg-white">
             <ul className="divide-y divide-slate-100 text-sm">
               {diffs.map((d) => {
@@ -797,7 +869,7 @@ export function Workspace() {
                       className="font-medium hover:underline"
                       onClick={() => {
                         setSelectedKey(fid);
-                        setFocusId(d.candidate.id);
+                        requestFocus(d.candidate.id);
                       }}
                     >
                       {d.candidate.id}
