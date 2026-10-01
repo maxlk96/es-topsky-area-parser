@@ -9,50 +9,45 @@ export function eaipRoot(): string {
 /** Parse default_offline.html tables into AMDT entries. */
 export function parseAmdtIndexHtml(html: string): AmdtEntry[] {
   const entries: AmdtEntry[] = [];
-  // Folders are linked as ./AIP%20AMDT%20.../ or similar
-  const linkRe =
-    /href="\.\/([^"]+?)\/(?:index\.html)?"[^>]*>[\s\S]*?<\/a>/gi;
-  // Simpler: find folder names in hrefs
-  const folders = new Set<string>();
-  for (const m of html.matchAll(/href="\.\/(AIP[^"\/]+|AIRAC[^"\/]+)\/?/gi)) {
-    folders.add(decodeURIComponent(m[1]));
-  }
 
-  // Parse table rows: Effective | Publication | Reason
   const sections: { kind: AmdtEntry["kind"]; chunk: string }[] = [];
   const current = html.split(/Currently Effective Issue/i)[1]?.split(/Next Issues/i)[0];
   const next = html.split(/Next Issues/i)[1]?.split(/Expired Issues/i)[0];
   const archive = html.split(/Expired Issues/i)[1];
   if (current) sections.push({ kind: "current", chunk: current });
   if (next) sections.push({ kind: "next", chunk: next });
-  if (archive) sections.push({ kind: "archive", chunk: archive.slice(0, 8000) });
+  if (archive) sections.push({ kind: "archive", chunk: archive });
 
   for (const { kind, chunk } of sections) {
+    // href="AIP AMDT 1-2026_2026_08_07\index-v2.html" (backslash path)
     const rowRe =
-      /<tr[^>]*>\s*<td[^>]*>([\s\S]*?)<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/gi;
+      /href="((?:AIRAC\s+)?AIP\s+AMDT[^"\\]+)[\\/][^"]*"[\s\S]*?<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/gi;
     let match: RegExpExecArray | null;
     while ((match = rowRe.exec(chunk))) {
-      const effectiveDate = stripTags(match[1]);
+      const folder = decodeURIComponent(match[1].trim());
+      // Effective date is inside the <a>…</a> before first </td> — recover from earlier slice
+      const before = chunk.slice(Math.max(0, match.index - 200), match.index + match[0].length);
+      const eff = before.match(/>(\d{2}\s+\w{3}\s+\d{4})</)?.[1] ?? "";
       const publicationDate = stripTags(match[2]);
       const reason = stripTags(match[3]);
-      if (!/AMDT|AIRAC/i.test(reason) && !/\d{4}/.test(effectiveDate)) continue;
-      const folder = guessFolder(reason, effectiveDate, [...folders]);
-      if (!folder) continue;
       entries.push({
         id: folder,
-        title: reason,
-        effectiveDate,
+        title: reason || folder,
+        effectiveDate: eff,
         publicationDate,
-        reason,
+        reason: reason || folder,
         kind,
         folder,
       });
     }
   }
 
-  // Fallback: just list folders from links if tables failed
+  // Fallback: any AMDT folder hrefs
   if (!entries.length) {
-    for (const folder of folders) {
+    for (const m of html.matchAll(
+      /href="((?:AIRAC\s+)?AIP\s+AMDT[^"\\]+)[\\/][^"]*"/gi,
+    )) {
+      const folder = m[1].trim();
       entries.push({
         id: folder,
         title: folder,
@@ -64,6 +59,7 @@ export function parseAmdtIndexHtml(html: string): AmdtEntry[] {
       });
     }
   }
+
   return entries;
 }
 
@@ -71,38 +67,8 @@ function stripTags(s: string): string {
   return s.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
 }
 
-function guessFolder(reason: string, effective: string, folders: string[]): string | null {
-  // AIP AMDT 1/2026 → AIP AMDT 1-2026_2026_08_07
-  const m = reason.match(/AIP AMDT\s+(\d+)\/(\d{4})/i);
-  if (m) {
-    const needle = `AMDT ${m[1]}-${m[2]}`;
-    const hit = folders.find((f) => f.includes(needle.replace(" ", " ")) || f.includes(`${m[1]}-${m[2]}`));
-    if (hit) return hit;
-  }
-  const airac = reason.match(/AIRAC AIP AMDT\s+(\d+)\/(\d{4})/i);
-  if (airac) {
-    const hit = folders.find((f) => f.includes(`${airac[1]}-${airac[2]}`) || f.includes(`AMDT ${airac[1]}`));
-    if (hit) return hit;
-  }
-  // date-based
-  const d = effective.match(/(\d{2})\s+(\w{3})\s+(\d{4})/i);
-  if (d) {
-    const months: Record<string, string> = {
-      JAN: "01", FEB: "02", MAR: "03", APR: "04", MAY: "05", JUN: "06",
-      JUL: "07", AUG: "08", SEP: "09", OCT: "10", NOV: "11", DEC: "12",
-    };
-    const mm = months[d[2].toUpperCase()];
-    if (mm) {
-      const stamp = `${d[3]}_${mm}_${d[1]}`;
-      const hit = folders.find((f) => f.includes(stamp));
-      if (hit) return hit;
-    }
-  }
-  return folders[0] ?? null;
-}
-
 export function amdtDatasourceUrl(folder: string): string {
-  return `${EAIP_ROOT}/${encodeURIComponent(folder).replace(/%20/g, "%20")}/v2/js/datasource.js`;
+  return `${EAIP_ROOT}/${folder.split("/").map(encodeURIComponent).join("/")}/v2/js/datasource.js`;
 }
 
 export function amdtSupUrl(folder: string, href: string): string {

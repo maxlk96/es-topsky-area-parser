@@ -1,61 +1,71 @@
 import type { SupCatalogueRow } from "@/lib/areas/types";
 
 const AREA_SUBJECT =
-  /temporary\s+(restricted|danger)\s+area|tillfälligt\s+(restriktions|farligt)\s*område|\bESR\d|\bESD\d|restricted area|danger area/i;
+  /temporary\s+(restricted|danger)\s+area|tillfälligt\s+(restriktions|farligt)\s*område|\bESR\d|\bESD\d/i;
 
+function clean(s: string): string {
+  return s.replace(/\\n/g, " ").replace(/\\t/g, " ").replace(/\s+/g, " ").trim();
+}
+
+/** Parse SUP rows from LFV datasource.js object literals. */
 export function parseDatasourceSups(jsText: string): SupCatalogueRow[] {
   const rows: SupCatalogueRow[] = [];
-  // Match subject + nearby href/period loosely
-  const subjectBlocks = [
-    ...jsText.matchAll(
-      /"href"\s*:\s*"(AIP SUP [^"]+\.html(?:#[^"]*)?)"[\s\S]{0,400}?"(?:text|subject)"\s*:\s*"([^"]*)"/gi,
-    ),
-  ];
-  const altBlocks = [
-    ...jsText.matchAll(
-      /"subject"\s*:\s*\{\s*"text"\s*:\s*"([^"]*)"[\s\S]{0,200}?"href"\s*:\s*"(AIP SUP [^"]+)"/gi,
-    ),
-  ];
-
   const seen = new Set<string>();
 
-  function add(href: string, subjectRaw: string, period = "") {
-    const subject = subjectRaw.replace(/\\n/g, " ").replace(/\s+/g, " ").trim();
-    const numberMatch = href.match(/AIP SUP\s+(\d+-\d+)/i) || subject.match(/SUP\s+(\d+\/\d+)/i);
-    const number = numberMatch
-      ? numberMatch[1].replace("-", "/")
-      : href;
-    const key = href + subject;
-    if (seen.has(key)) return;
+  // Each SUP entry roughly: "year": { ... "href": "AIP SUP …" ... }, ... "subject": { "text": "…" }
+  const blockRe =
+    /"year"\s*:\s*\{[\s\S]*?"href"\s*:\s*"(AIP SUP [^"]+)"[\s\S]*?"text"\s*:\s*"(AIP SUP [^"]*)"[\s\S]*?\}\s*,\s*"affects"[\s\S]*?"period"\s*:\s*\{[\s\S]*?"text"\s*:\s*"([^"]*)"[\s\S]*?"subject"\s*:\s*\{[\s\S]*?"text"\s*:\s*"([^"]*)"/gi;
+
+  let m: RegExpExecArray | null;
+  while ((m = blockRe.exec(jsText))) {
+    const href = m[1].replace(/#.*$/, "");
+    const label = clean(m[2]);
+    const period = clean(m[3]);
+    const subject = clean(m[4]);
+    // Prefer English
+    if (/sv-SE/i.test(href)) continue;
+    const number =
+      label.match(/AIP SUP\s+(\d+\/\d+)/i)?.[1] ||
+      href.match(/AIP SUP\s+(\d+)-(\d+)/i)?.[0]?.replace(/AIP SUP\s+/i, "").replace("-", "/") ||
+      href;
+    const numNorm = typeof number === "string" && number.includes("-")
+      ? number.replace(/^(\d+)-(\d+)$/, "$1/$2")
+      : String(number).replace(/^AIP SUP\s+/i, "").replace(/^(\d+)-(\d+).*/, "$1/$2");
+
+    const key = href;
+    if (seen.has(key)) continue;
     seen.add(key);
-    // Prefer English SUP pages
-    if (/sv-SE/i.test(href) && jsText.includes(href.replace("sv-SE", "en-GB"))) return;
     rows.push({
-      number,
-      href: href.replace(/#.*$/, ""),
+      number: numNorm,
+      href,
       period,
       subject,
       likelyArea: AREA_SUBJECT.test(subject),
     });
   }
 
-  for (const m of subjectBlocks) add(m[1], m[2]);
-  for (const m of altBlocks) add(m[2], m[1]);
-
-  // Broader fallback: any AIP SUP en-GB href with nearby Temporary
+  // Fallback looser pairing if structured regex missed
   if (!rows.length) {
-    for (const m of jsText.matchAll(/"href"\s*:\s*"(AIP SUP [^"]*en-GB\.html)"/gi)) {
-      add(m[1], m[1]);
+    for (const hit of jsText.matchAll(
+      /"href"\s*:\s*"(AIP SUP [^"]*en-GB\.html(?:#[^"]*)?)"/gi,
+    )) {
+      const href = hit[1].replace(/#.*$/, "");
+      if (seen.has(href)) continue;
+      seen.add(href);
+      const nearby = jsText.slice(hit.index, hit.index + 1200);
+      const subject = clean(
+        nearby.match(/"subject"\s*:\s*\{\s*"text"\s*:\s*"([^"]*)"/)?.[1] ?? href,
+      );
+      const number = href.match(/AIP SUP\s+(\d+)-(\d+)/i);
+      rows.push({
+        number: number ? `${number[1]}/${number[2]}` : href,
+        href,
+        period: "",
+        subject,
+        likelyArea: AREA_SUBJECT.test(subject),
+      });
     }
   }
 
-  // Deduplicate by number preferring en-GB + likelyArea
-  const byNum = new Map<string, SupCatalogueRow>();
-  for (const r of rows) {
-    const prev = byNum.get(r.number);
-    if (!prev || (r.likelyArea && !prev.likelyArea) || (/en-GB/.test(r.href) && !/en-GB/.test(prev.href))) {
-      byNum.set(r.number, r);
-    }
-  }
-  return [...byNum.values()].sort((a, b) => Number(b.likelyArea) - Number(a.likelyArea));
+  return rows.sort((a, b) => Number(b.likelyArea) - Number(a.likelyArea));
 }
