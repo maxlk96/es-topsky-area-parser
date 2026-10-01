@@ -3,6 +3,7 @@ import {
   activationLabel,
   hasAupActivation,
   isNoAupActivation,
+  shouldEmitNoAupActivationComment,
   stripTempoGroupHeaders,
   withAupActivation,
 } from "./activation";
@@ -43,6 +44,31 @@ describe("activation helpers", () => {
     expect(
       activationLabel(area({ activation: { type: "ALWAYS" } })),
     ).toBe("always");
+  });
+
+  it("emits // NO AUP ACTIVATION only when there is no ACTIVE: line", () => {
+    expect(shouldEmitNoAupActivationComment(area())).toBe(true);
+    expect(
+      shouldEmitNoAupActivationComment(
+        area({ activation: { type: "NONE" } }),
+      ),
+    ).toBe(true);
+    // ACTIVE:1 / schedule / AUP → never the comment
+    expect(
+      shouldEmitNoAupActivationComment(
+        area({ activation: { type: "ALWAYS" } }),
+      ),
+    ).toBe(false);
+    expect(
+      shouldEmitNoAupActivationComment(
+        area({ activation: { type: "SCHEDULE", raw: ["ACTIVE:0315:0815:1234567:0000:2359"] } }),
+      ),
+    ).toBe(false);
+    expect(
+      shouldEmitNoAupActivationComment(
+        area({ activation: { type: "AUP", key: "ESD309" } }),
+      ),
+    ).toBe(false);
   });
 
   it("toggles AUP on/off and clears rawBlock", () => {

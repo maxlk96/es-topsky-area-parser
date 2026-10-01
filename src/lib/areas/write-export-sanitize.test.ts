@@ -207,6 +207,32 @@ N059.20.26.000 E017.52.30.000
     expect(out).toContain("// EXCLUDED. ONLY UAS (BVLOS)");
   });
 
+  it("does not emit // NO AUP ACTIVATION when ACTIVE:1 (or other non-AUP ACTIVE) is present", () => {
+    const always = tempoArea({
+      id: "ESR130",
+      shortName: "R130",
+      name: "MALMÖ",
+      activation: { type: "ALWAYS" },
+      provenance: { source: "sup", supNumber: "1/2026", validTo: "31 DEC 2026" },
+      rawBlock: "",
+    });
+    const scheduled = tempoArea({
+      id: "ESR31",
+      shortName: "R31",
+      name: "KARLSÖ",
+      activation: {
+        type: "SCHEDULE",
+        raw: ["ACTIVE:0315:0815:1234567:0000:2359"],
+      },
+      provenance: { source: "sup", supNumber: "2/2026", validTo: "31 DEC 2026" },
+      rawBlock: "",
+    });
+    const out = formatTempoAreaBlocks([always, scheduled]);
+    expect(out).not.toContain("// NO AUP ACTIVATION");
+    expect(out).toContain("ACTIVE:1");
+    expect(formatAreaBlock(always)).not.toContain("// NO AUP ACTIVATION");
+  });
+
   it("re-emits // NO AUP ACTIVATION for preserved manual tempo SUP areas", () => {
     const file = `//      START OF TEMPO R AND D AREAS
 // 299/25 - Valid to 31 DEC 2026

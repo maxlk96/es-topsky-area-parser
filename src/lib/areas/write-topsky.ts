@@ -1,5 +1,5 @@
 import {
-  isNoAupActivation,
+  shouldEmitNoAupActivationComment,
   stripTempoGroupHeaders,
 } from "./activation";
 import { areaOmitsLabel } from "./classify";
@@ -246,8 +246,8 @@ export function formatAreaBlock(
   if (includeSupHeader) {
     const validity = formatSupValidityLine(area);
     if (validity) lines.push(validity);
-    // ESAA: comment when SUP area has no AUP activation line
-    if (area.provenance.supNumber && isNoAupActivation(area)) {
+    // ESAA: only when there is no ACTIVE: line at all (not ACTIVE:1 / schedule).
+    if (area.provenance.supNumber && shouldEmitNoAupActivationComment(area)) {
       lines.push("// NO AUP ACTIVATION");
     }
   }
@@ -327,7 +327,9 @@ export function formatTempoAreaBlocks(areas: AreaRecord[]): string {
     if (first.provenance.supNumber) {
       const validity = formatSupValidityLine(first);
       if (validity) chunks.push(validity);
-      const noAup = group.every((a) => isNoAupActivation(a));
+      // Group comment only if every area lacks any ACTIVE: line (manual).
+      // ACTIVE:1 / schedule / AUP → never emit // NO AUP ACTIVATION.
+      const noAup = group.every((a) => shouldEmitNoAupActivationComment(a));
       if (noAup) chunks.push("// NO AUP ACTIVATION");
       if (validity || noAup) chunks.push("");
     }

@@ -9,14 +9,24 @@ export function hasAupActivation(
 }
 
 /**
- * True when there is no AUP activation line (manual / none).
- * These tempo SUP areas get `// NO AUP ACTIVATION` on export.
+ * True when there is no activation line at all (manual / none).
+ * Not true for ACTIVE:1 (ALWAYS) or other non-AUP ACTIVE: schedules.
  */
 export function isNoAupActivation(
   area: Pick<AreaRecord, "activation">,
 ): boolean {
   const t = area.activation?.type;
   return !t || t === "MANUAL" || t === "NONE";
+}
+
+/**
+ * Emit `// NO AUP ACTIVATION` only when the area has no ACTIVE: line at all.
+ * If ACTIVE:1 / ACTIVE:MMDD… / AUP / AUP_GROUP is present → do not emit.
+ */
+export function shouldEmitNoAupActivationComment(
+  area: Pick<AreaRecord, "activation">,
+): boolean {
+  return isNoAupActivation(area);
 }
 
 /** Short UI label for the activation mode. */
