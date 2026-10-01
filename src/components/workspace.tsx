@@ -382,6 +382,12 @@ export function Workspace() {
 
   const acceptDiff = (item: DiffItem) => {
     if (item.status !== "new" && item.status !== "changed") return;
+    if (item.candidate.needsReview === "missing_name") {
+      toast.error(
+        `${item.candidate.id} needs an AIP name — use Rename before Accept`,
+      );
+      return;
+    }
     setAreas((prev) => {
       const next = [...prev];
       const idx = next.findIndex(
@@ -402,10 +408,21 @@ export function Workspace() {
 
   const acceptAllDiffs = () => {
     const acceptable = diffs.filter(
-      (d) => d.status === "new" || d.status === "changed",
+      (d) =>
+        (d.status === "new" || d.status === "changed") &&
+        d.candidate.needsReview !== "missing_name",
     );
+    const skippedMissingName = diffs.filter(
+      (d) =>
+        (d.status === "new" || d.status === "changed") &&
+        d.candidate.needsReview === "missing_name",
+    ).length;
     if (!acceptable.length) {
-      toast.message("No new/changed candidates to accept");
+      toast.message(
+        skippedMissingName
+          ? `${skippedMissingName} area(s) need an AIP name (Rename) before Accept all`
+          : "No new/changed candidates to accept",
+      );
       return;
     }
     setAreas((prev) => {
@@ -430,7 +447,11 @@ export function Workspace() {
     setDiffs((d) =>
       d.filter((x) => !acceptedIds.has(x.candidate.id.toUpperCase())),
     );
-    toast.success(`Accepted ${acceptable.length} area(s)`);
+    toast.success(
+      skippedMissingName
+        ? `Accepted ${acceptable.length} · skipped ${skippedMissingName} missing name`
+        : `Accepted ${acceptable.length} area(s)`,
+    );
   };
 
   const onLabelMove = useCallback((fid: string, lat: number, lon: number) => {
@@ -488,9 +509,29 @@ export function Workspace() {
           nameEdited: true,
           // LABEL text changed only when a LABEL already existed.
           labelEdited: a.label ? true : a.labelEdited,
+          needsReview: undefined,
           rawBlock,
         };
       }),
+    );
+    // Clear needs_review on matching diff candidates too
+    setDiffs((prev) =>
+      prev.map((d) =>
+        areaFeatureId(d.candidate) === renamingFid
+          ? {
+              ...d,
+              candidate: {
+                ...d.candidate,
+                name,
+                label: d.candidate.label
+                  ? { ...d.candidate.label, text: name }
+                  : d.candidate.label,
+                needsReview: undefined,
+              },
+              notes: d.notes.filter((n) => !/missing AIP name/i.test(n)),
+            }
+          : d,
+      ),
     );
     setRenamingFid(null);
     setRenameDraft("");
@@ -756,7 +797,17 @@ export function Workspace() {
         </main>
 
         <aside className="flex min-h-0 flex-col gap-3 border-l border-slate-200/80 bg-white/70 p-3">
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Areas</p>
+          <div className="flex items-baseline justify-between gap-2">
+            <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+              Areas
+            </p>
+            {areas.some((a) => a.needsReview === "missing_name") ? (
+              <p className="text-[10px] font-medium text-red-700">
+                {areas.filter((a) => a.needsReview === "missing_name").length}{" "}
+                missing name
+              </p>
+            ) : null}
+          </div>
           <div className="rounded-md border border-slate-200 bg-white px-2 py-2">
             <div className="flex items-center justify-between gap-2">
               <div className="min-w-0">
@@ -992,11 +1043,19 @@ export function Workspace() {
                                 renamed
                               </span>
                             ) : null}
+                            {a.needsReview === "missing_name" ? (
+                              <span className="ml-1 text-[10px] font-medium text-red-700">
+                                needs_review
+                              </span>
+                            ) : null}
                           </span>
                           <span className="block text-[11px] text-slate-400">
                             {a.category}
                             {a.limits ? ` · ${a.limits[0]}:${a.limits[1]}` : ""}
                             {a.noaiw ? " · NOAIW" : ""}
+                            {a.needsReview === "missing_name"
+                              ? " · missing AIP name"
+                              : ""}
                           </span>
                         </span>
                       </button>
@@ -1081,7 +1140,7 @@ export function Workspace() {
                   onMouseEnter={() => setHoverKey(fid)}
                   onMouseLeave={() => setHoverKey(null)}
                 >
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <Badge
                       variant={
                         d.status === "new"
@@ -1093,6 +1152,11 @@ export function Workspace() {
                     >
                       {d.status}
                     </Badge>
+                    {d.candidate.needsReview === "missing_name" ? (
+                      <Badge variant="outline" className="border-red-300 text-red-700">
+                        needs_review
+                      </Badge>
+                    ) : null}
                     <button
                       type="button"
                       className="font-medium hover:underline"

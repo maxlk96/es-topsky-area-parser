@@ -45,6 +45,9 @@ export function diffCandidates(
     if (isUpcoming(candidate, now)) {
       notes.push("Upcoming — not yet in force");
     }
+    if (candidate.needsReview === "missing_name") {
+      notes.push("needs_review: missing AIP name (designator-only)");
+    }
 
     const ex = byId.get(candidate.id.toUpperCase());
     if (!ex) {

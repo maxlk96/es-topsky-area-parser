@@ -12,6 +12,7 @@ import {
   parseCompactCoord,
 } from "@/lib/areas/coords";
 import { parseAipVerticalToken } from "@/lib/areas/limits";
+import { isDesignatorOnlyName } from "@/lib/areas/names";
 import type { AreaRecord } from "@/lib/areas/types";
 import { parseValidityWindow } from "@/lib/areas/validity";
 
@@ -42,6 +43,50 @@ type AreaSection = {
  * "ESR794 FAGERSANNA … coords …" blocks are kept. Prevents merging every
  * polygon in a multi-area SUP into one self-intersecting fill.
  */
+/** Reject words that look like AIP table chrome, not place names. */
+function looksLikePlaceName(name: string): boolean {
+  const n = name.trim();
+  if (n.length < 2) return false;
+  if (/^(and|och|the|area|areas|temporary|restricted|danger|vertical|limit|limits|hours|tider|from|to|gnd|sfc|unl|ams|ft|fl)$/i.test(n)) {
+    return false;
+  }
+  if (/^\d+$/.test(n)) return false;
+  return true;
+}
+
+/** Best-effort AIP name near a designator (title / geometry header). */
+export function extractNameNearDesignator(text: string, id: string): string | undefined {
+  const esc = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const patterns = [
+    // TEMPORARY RESTRICTED AREA - ESR534 BRUNNA
+    new RegExp(
+      `(?:TEMPORARY\\s+)?(?:RESTRICTED|DANGER)\\s+AREA\\s*[-–:]?\\s*${esc}\\s+([A-ZÅÄÖ][A-Za-zÅÄÖåäö0-9][A-Za-zÅÄÖåäö0-9 /-]{0,40})`,
+      "i",
+    ),
+    // ESR534 BRUNNA (geometry header)
+    new RegExp(
+      `\\b${esc}\\s+([A-ZÅÄÖ][A-Za-zÅÄÖåäö0-9][A-Za-zÅÄÖåäö0-9/-]{0,40})(?=[\\s.,;:]|$)`,
+      "i",
+    ),
+    // Brunna (ESR534) / BRUNNA, ESR534
+    new RegExp(
+      `([A-ZÅÄÖ][A-Za-zÅÄÖåäö0-9/-]{1,40})\\s*[(,]\\s*${esc}\\b`,
+      "i",
+    ),
+  ];
+  for (const re of patterns) {
+    const m = text.match(re);
+    if (!m?.[1]) continue;
+    let name = m[1].trim().replace(/\s+(and|och)$/i, "").trim();
+    // Truncate at bilingual slash leftovers: "Brunna / Temporary"
+    name = name.split(/\s*\/\s*/)[0]?.trim() || name;
+    if (looksLikePlaceName(name) && !isDesignatorOnlyName(name, shortFromDesignator(id), id)) {
+      return name;
+    }
+  }
+  return undefined;
+}
+
 export function extractAreaSections(text: string): AreaSection[] {
   // No trailing \b — in JS, Å/Ä/Ö are non-word chars so \b would cut "ORNÖ" to "ORN".
   const re =
@@ -53,7 +98,7 @@ export function extractAreaSections(text: string): AreaSection[] {
     let name = hits[i][2].trim();
     // Drop trailing "and" / "och" leftovers from bilingual titles
     name = name.replace(/\s+(and|och)$/i, "").trim();
-    if (name.length < 2) continue;
+    if (!looksLikePlaceName(name)) continue;
     const start = hits[i].index ?? 0;
     const end = i + 1 < hits.length ? (hits[i + 1].index ?? text.length) : text.length;
     const chunk = text.slice(start, end);
@@ -62,6 +107,9 @@ export function extractAreaSections(text: string): AreaSection[] {
     ].length;
     const hasCircle = /circle with radius/i.test(chunk);
     if (coordCount < 3 && !hasCircle) continue;
+    // Prefer a richer name from the full document when the local token is weak
+    const better = extractNameNearDesignator(text, id);
+    if (better && better.length > name.length) name = better;
     found.push({
       id,
       name,
@@ -134,7 +182,14 @@ function buildAreaFromSection(
   const id = section.id.toUpperCase();
   const shortName = shortFromDesignator(id);
   const category = id.startsWith("ESD") ? "D" : "R";
-  const name = section.name.toUpperCase();
+  const fromDoc = extractNameNearDesignator(text, id);
+  const rawName = (fromDoc && fromDoc.length >= section.name.length
+    ? fromDoc
+    : section.name
+  ).trim();
+  const name = rawName.toLocaleUpperCase("sv-SE");
+  const needsReview =
+    isDesignatorOnlyName(name, shortName, id) ? ("missing_name" as const) : undefined;
 
   let coordinates = parseCoordsFromChunk(section.chunk);
   const boundCircle = parseCircleFromChunk(section.chunk);
@@ -206,6 +261,7 @@ function buildAreaFromSection(
       })),
       rawComment: remarks.slice(0, 500),
     },
+    needsReview,
     rawBlock: "",
     section: "tempo",
   };
@@ -219,15 +275,8 @@ function parseSingleAreaFallback(
   const idMatch = text.match(/\b(ES[RD]\d{2,4}[A-Z]?)\b/);
   if (!idMatch) return [];
   const id = idMatch[1].toUpperCase();
-  let name = shortFromDesignator(id);
-  const title =
-    text.match(
-      new RegExp(
-        `(?:TEMPORARY\\s+(?:RESTRICTED|DANGER)\\s+AREA\\s*[-–]?\\s*${id}\\s+([A-ZÅÄÖ][A-ZÅÄÖa-zåäö0-9 /-]{1,40}))`,
-        "i",
-      ),
-    ) || text.match(new RegExp(`${id}\\s+([A-ZÅÄÖ][A-ZÅÄÖa-zåäö0-9 /-]{1,40})`));
-  if (title?.[1]) name = title[1].trim();
+  const name =
+    extractNameNearDesignator(text, id) || shortFromDesignator(id);
   const area = buildAreaFromSection(
     { id, name, chunk: text },
     text,

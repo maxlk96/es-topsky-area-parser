@@ -4,6 +4,10 @@ import {
 } from "./classify";
 import { parseLimitsLine } from "./limits";
 import { parseTopSkyCoordPair } from "./coords";
+import {
+  isDesignatorOnlyName,
+  resolveAreaName,
+} from "./names";
 import type { AreaRecord, ParseResult } from "./types";
 
 function bytesToLatin1(bytes: Uint8Array): string {
@@ -72,10 +76,26 @@ export function parseTopSkyText(text: string, encoding = "latin1"): ParseResult 
       activation = { type: "MANUAL", raw: [] };
     }
 
-    const name =
-      cur.label?.text ||
-      cur.commentName ||
-      cur.shortName.trim();
+    const shortName = cur.shortName.trim();
+    const resolved = resolveAreaName({
+      labelText: cur.label?.text,
+      commentName: cur.commentName,
+      shortName,
+      id,
+    });
+    let label = cur.label;
+    // If LABEL text was kept but coords failed, place label on first vertex.
+    if (label && label.lat === 0 && label.lon === 0 && cur.coords.length) {
+      const [lon, lat] = cur.coords[0];
+      label = { ...label, lat, lon, text: resolved.name };
+    } else if (label) {
+      label = { ...label, text: resolved.name };
+    }
+    const needsReview =
+      (category === "R" || category === "D") &&
+      isDesignatorOnlyName(resolved.name, shortName, id)
+        ? ("missing_name" as const)
+        : undefined;
 
     const end = cur.start + cur.lines.length;
     // raw block reconstructed from collected lines
@@ -83,22 +103,23 @@ export function parseTopSkyText(text: string, encoding = "latin1"): ParseResult 
 
     areas.push({
       id,
-      shortName: cur.shortName.trim(),
-      name,
+      shortName,
+      name: resolved.name,
       category,
       areaTypeCode: cur.areaType,
       coordinates: cur.coords,
       limits: cur.limits,
       activation,
       directives: cur.directives,
-      label: cur.label,
+      label,
       mapDefaultVisible,
       noaiw: cur.noaiw,
       boundCircle: cur.boundCircle,
       provenance: {
         source: "topsky",
-        rawComment: pendingComments.join("\n") || undefined,
+        rawComment: cur.commentName || undefined,
       },
+      needsReview,
       rawBlock,
       section: inTempo ? "tempo" : "other",
     });
@@ -120,17 +141,21 @@ export function parseTopSkyText(text: string, encoding = "latin1"): ParseResult 
     const trimmedLine = line.trim();
     const isEsComment = new RegExp("^//ES[RDP]\\d+", "i").test(trimmedLine);
     const isSupValidity = new RegExp("^//\\s*\\d+/\\d+", "i").test(trimmedLine);
-    if (isEsComment || isSupValidity) {
+    // A new //ESR… header always starts the next area — flush the open one first.
+    // Previously these were dropped while `cur` was open, losing AIP names.
+    if (isEsComment) {
+      if (cur) flush();
+      pendingComments = [
+        ...pendingComments.filter(
+          (c) => !new RegExp("^//ES[RDP]\\d+", "i").test(c.trim()),
+        ),
+        line,
+      ];
+      continue;
+    }
+    if (isSupValidity) {
       if (!cur) pendingComments.push(line);
-      const nameMatch = trimmedLine.match(new RegExp("^//ES[RDP]\\d+\\S*\\s+(.+)$", "i"));
-      if (nameMatch && !cur) {
-        pendingComments = [
-          ...pendingComments.filter(
-            (c) => !new RegExp("^//ES[RDP]\\d+", "i").test(c.trim()),
-          ),
-          line,
-        ];
-      }
+      else cur.lines.push(line);
       continue;
     }
 
@@ -205,16 +230,12 @@ export function parseTopSkyText(text: string, encoding = "latin1"): ParseResult 
         const latTok = parts[1];
         const lonTok = parts[2];
         const text = parts.slice(3).join(":");
+        // Always keep LABEL text (name) even if coords are odd/unpadded.
         const pair = parseTopSkyCoordPair(`${latTok} ${lonTok}`);
         if (pair) {
           cur.label = { lat: pair.lat, lon: pair.lon, text };
         } else {
-          // decimal-ish fallback
-          const lat = Number(latTok.replace(/^[NS]/i, ""));
-          const lon = Number(lonTok.replace(/^[EW]/i, ""));
-          if (!Number.isNaN(lat) && !Number.isNaN(lon)) {
-            cur.label = { lat, lon, text };
-          }
+          cur.label = { lat: 0, lon: 0, text };
         }
       }
       continue;

@@ -51,6 +51,11 @@ export interface AreaRecord {
   boundCircle?: { lat: number; lon: number; radiusNm: number };
   provenance: AreaProvenance;
   exclusionReason?: string;
+  /**
+   * R/D hard rule: every restricted/danger area needs a real display name.
+   * Set when parse only has the designator (R41A / ESR41A) and AIP name was not found.
+   */
+  needsReview?: "missing_name";
   rawBlock: string;
   section?: "tempo" | "other";
 }

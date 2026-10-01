@@ -22,9 +22,10 @@ export function parseCompactCoord(token: string): { lat: number; lon: number } |
 
 export function parseTopSkyCoordPair(line: string): { lat: number; lon: number } | null {
   const trimmed = line.trim();
-  // N060.40.27.000 E015.48.54.000
+  // ESAA file often omits leading zeros: N066.26.8.428 E018.56.56.216
+  // Accept 1–2 digit minutes / seconds (not only zero-padded \d{2}).
   const space = trimmed.match(
-    /^([NS])(\d{2,3})\.(\d{2})\.(\d{2}(?:\.\d+)?)\s+([EW])(\d{2,3})\.(\d{2})\.(\d{2}(?:\.\d+)?)$/i,
+    /^([NS])(\d{2,3})\.(\d{1,2})\.(\d{1,2}(?:\.\d+)?)\s+([EW])(\d{2,3})\.(\d{1,2})\.(\d{1,2}(?:\.\d+)?)$/i,
   );
   if (space) {
     let lat =
@@ -35,9 +36,9 @@ export function parseTopSkyCoordPair(line: string): { lat: number; lon: number }
     if (space[5].toUpperCase() === "W") lon = -lon;
     return { lat, lon };
   }
-  // Colon form N060.40.27.000:E015.48.54.000
+  // Colon form N060.40.27.000:E015.48.54.000 (also unpadded)
   const colon = trimmed.match(
-    /^([NS])(\d{2,3})\.(\d{2})\.(\d{2}(?:\.\d+)?):([EW])(\d{2,3})\.(\d{2})\.(\d{2}(?:\.\d+)?)$/i,
+    /^([NS])(\d{2,3})\.(\d{1,2})\.(\d{1,2}(?:\.\d+)?):([EW])(\d{2,3})\.(\d{1,2})\.(\d{1,2}(?:\.\d+)?)$/i,
   );
   if (colon) {
     let lat =

@@ -15,4 +15,13 @@ describe("coords", () => {
     expect(back).not.toBeNull();
     expect(back!.lat).toBeCloseTo(59.410277, 3);
   });
+
+  it("parses unpadded LABEL seconds (ESAA style)", () => {
+    const a = parseTopSkyCoordPair("N066.26.8.428 E018.56.56.216");
+    expect(a).not.toBeNull();
+    expect(a!.lat).toBeCloseTo(66 + 26 / 60 + 8.428 / 3600, 5);
+    const b = parseTopSkyCoordPair("N056.40.2.182:E012.33.36.559");
+    expect(b).not.toBeNull();
+    expect(b!.lat).toBeCloseTo(56 + 40 / 60 + 2.182 / 3600, 5);
+  });
 });
