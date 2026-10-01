@@ -1,4 +1,8 @@
-import { supNumberKey } from "@/lib/aip/sup-catalogue";
+import {
+  formatSupNumberShort,
+  supNumberKey,
+} from "@/lib/aip/sup-catalogue";
+import { isStaleExcludedStub, staleTempoReason } from "./stale-tempo";
 import {
   shouldEmitNoAupActivationComment,
   stripTempoGroupHeaders,
@@ -340,16 +344,7 @@ export function applyAcceptedAreaBlocks(
   return ensureOmitLabelMarkers(text);
 }
 
-/** ESAA tempo convention: `182/2025` → `182/25`. */
-export function formatSupNumberShort(supNumber: string): string {
-  const m = String(supNumber).match(/(\d+)\s*[/-]\s*(\d+)/);
-  if (!m) return String(supNumber).trim();
-  const a = Number(m[1]);
-  const b = Number(m[2]);
-  if (b >= 2000) return `${a}/${String(b).slice(-2)}`;
-  if (a >= 2000) return `${b}/${String(a).slice(-2)}`;
-  return `${a}/${b}`;
-}
+export { formatSupNumberShort } from "@/lib/aip/sup-catalogue";
 
 /** `// 182/25 - Valid to 31 AUG 2026` */
 export function formatSupValidityLine(area: AreaRecord): string | undefined {
@@ -764,13 +759,22 @@ export function formatTempoSectionBody(
     .join("\n");
 }
 
-/** Surgical replace of tempo section; remove expired; insert accepted new blocks. */
+/**
+ * Surgical replace of tempo section; remove expired / AMDT-missing SUP areas;
+ * insert accepted new blocks.
+ */
 export function mergeTempoSection(
   originalText: string,
   workingAreas: AreaRecord[],
-  opts?: { now?: Date; excludedStubs?: AreaRecord[] },
+  opts?: {
+    now?: Date;
+    excludedStubs?: AreaRecord[];
+    /** When set, drop tempo SUPs absent from the selected AMDT catalogue. */
+    catalogueKeys?: Set<string> | null;
+  },
 ): string {
   const now = opts?.now ?? new Date();
+  const catalogueKeys = opts?.catalogueKeys ?? null;
   const text = originalText.replace(/\r\n/g, "\n");
   const startBanner = findSectionBannerSpan(
     text,
@@ -778,9 +782,13 @@ export function mergeTempoSection(
   );
   const endBanner = findSectionBannerSpan(text, "END OF TEMPO R AND D AREAS");
 
+  const dropStale = (a: AreaRecord) =>
+    !!staleTempoReason(a, { now, catalogueKeys });
+
   const tempoAreas = workingAreas.filter(
     (a) =>
       a.exclusionReason !== "uas_only" &&
+      !dropStale(a) &&
       (a.section === "tempo" ||
         a.provenance.source === "sup" ||
         a.provenance.source === "notam" ||
@@ -790,12 +798,12 @@ export function mergeTempoSection(
   const inTempo = workingAreas.filter(
     (a) =>
       a.section === "tempo" &&
-      !isExpired(a, now) &&
+      !dropStale(a) &&
       a.exclusionReason !== "uas_only",
   );
   const activeTempo = inTempo.length
     ? inTempo
-    : tempoAreas.filter((a) => !isExpired(a, now) && a.mapDefaultVisible);
+    : tempoAreas.filter((a) => a.mapDefaultVisible);
 
   // EXCLUDED stubs: new from scan/diffs + untouched stubs from original tempo.
   const excludedFromWork = [
@@ -812,6 +820,7 @@ export function mergeTempoSection(
 
   const preservedExcluded = extractExcludedStubsFromTempo(originalTempo).filter(
     (stub) => {
+      if (isStaleExcludedStub(stub, { now, catalogueKeys })) return false;
       const key = supKeyFromExcludedStub(stub);
       if (!key) return true;
       const hasNew = excludedFromWork.some(
@@ -829,9 +838,14 @@ export function mergeTempoSection(
     },
   );
 
+  // Drop new EXCLUDED stubs for gone/expired SUPs too.
+  const excludedFromWorkFresh = excludedFromWork.filter(
+    (a) => !staleTempoReason(a, { now, catalogueKeys }),
+  );
+
   const seenEx = new Set<string>();
   const excludedBlocks: { supKey: string; text: string }[] = [];
-  for (const a of excludedFromWork) {
+  for (const a of excludedFromWorkFresh) {
     const key = a.provenance.supNumber
       ? formatSupNumberShort(a.provenance.supNumber)
       : a.id;

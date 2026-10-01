@@ -65,9 +65,8 @@ export async function POST(_req: Request, ctx: Ctx) {
     const enrHtml = await enrRes.text();
     const enr51 = parseEnr51Html(enrHtml, { amdtId: folder });
 
-    const allAreaSups = parseDatasourceSups(await dsRes.text()).filter(
-      (s) => s.likelyArea,
-    );
+    const catalogueSups = parseDatasourceSups(await dsRes.text());
+    const allAreaSups = catalogueSups.filter((s) => s.likelyArea);
     const supRows = allAreaSups.filter((s) => !mentionsUasActivity(s.subject));
     const skippedUasSubject = allAreaSups.length - supRows.length;
 
@@ -100,6 +99,8 @@ export async function POST(_req: Request, ctx: Ctx) {
       supParsed: supAreas.length,
       supScanned: supRows.length,
       skippedUasSubject,
+      /** Full AMDT SUP catalogue (for dropping tempo SUPs no longer published). */
+      catalogueSups,
       areas,
       count: areas.length,
     });

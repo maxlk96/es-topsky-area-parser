@@ -39,6 +39,12 @@ export function parseTopSkyText(text: string, encoding = "latin1"): ParseResult 
 
   let inTempo = false;
   let pendingComments: string[] = [];
+  /**
+   * ESAA tempo files put one `// N/YY - Valid to …` header above a *group* of
+   * areas (e.g. SUP 145/26 → ESR500–ESR506). Only the first area's raw block
+   * contains that line — siblings must inherit it for prune/export.
+   */
+  let activeSup: { supNumber: string; validTo?: string } | null = null;
   let cur: {
     start: number;
     areaType: string;
@@ -130,8 +136,8 @@ export function parseTopSkyText(text: string, encoding = "latin1"): ParseResult 
       }
     }
 
-    // Tempo SUP header: `// 182/25 - Valid to 31 AUG 2026` (kept in rawBlock; also
-    // on provenance so Accept/rewrite can re-emit the same convention).
+    // Tempo SUP header: `// 182/25 - Valid to 31 AUG 2026` (in this block or
+    // inherited from the active group header for sibling areas).
     let supNumber: string | undefined;
     let validTo: string | undefined;
     for (const raw of cur.lines) {
@@ -143,6 +149,10 @@ export function parseTopSkyText(text: string, encoding = "latin1"): ParseResult 
         validTo = m[3].trim();
         break;
       }
+    }
+    if (!supNumber && activeSup) {
+      supNumber = activeSup.supNumber;
+      validTo = activeSup.validTo;
     }
 
     areas.push({
@@ -183,10 +193,12 @@ export function parseTopSkyText(text: string, encoding = "latin1"): ParseResult 
     const line = lines[i];
     if (line.includes("START OF TEMPO R AND D AREAS")) {
       inTempo = true;
+      activeSup = null;
     }
     if (line.includes("END OF TEMPO R AND D AREAS")) {
       flush();
       inTempo = false;
+      activeSup = null;
     }
 
     // Section banners (////… TEMPO / DANGER / PCA / SOARING) stay in the file
@@ -212,8 +224,24 @@ export function parseTopSkyText(text: string, encoding = "latin1"): ParseResult 
       continue;
     }
     if (isSupValidity) {
-      if (!cur) pendingComments.push(line);
-      else cur.lines.push(line);
+      // A new SUP Valid-to header always ends the previous area — never append
+      // the next SUP's header onto the open block (that mis-tagged ESR506 as 146/26).
+      if (cur) flush();
+      pendingComments.push(line);
+      const m = line
+        .trim()
+        .match(/^\/\/\s*(\d+)\s*\/\s*(\d+)\s*-\s*Valid to\s+(.+)$/i);
+      if (m) {
+        activeSup = {
+          supNumber: `${m[1]}/${m[2]}`,
+          validTo: m[3].trim(),
+        };
+      } else {
+        const bare = line.trim().match(/^\/\/\s*(\d+)\s*\/\s*(\d+)\s*$/);
+        if (bare) {
+          activeSup = { supNumber: `${bare[1]}/${bare[2]}` };
+        }
+      }
       continue;
     }
 

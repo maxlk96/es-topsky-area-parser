@@ -30,7 +30,7 @@ import {
   redensifyBoundCircle,
   redensifyBoundCircleAuto,
 } from "@/lib/areas/coords";
-import { supNumberKey } from "@/lib/aip/sup-catalogue";
+import { formatSupNumberShort, supNumberKey } from "@/lib/aip/sup-catalogue";
 import {
   diffCandidates,
   diffSourceGroupKey,
@@ -39,6 +39,11 @@ import {
   mergeDiffItems,
   sortDiffItems,
 } from "@/lib/areas/diff";
+import {
+  catalogueSupKeySet,
+  pruneStaleTempoAreas,
+  staleTempoDiffItems,
+} from "@/lib/areas/stale-tempo";
 import { mergePcaAcceptPreservingLabel } from "@/lib/aip/parse-pca-echarts";
 import {
   IFR_PLANNING_NOTE,
@@ -232,11 +237,50 @@ export function Workspace() {
   const [amdts, setAmdts] = useState<AmdtEntry[]>([]);
   const [amdtId, setAmdtId] = useState("");
   const [sups, setSups] = useState<SupCatalogueRow[]>([]);
+  /** Short SUP keys from the full AMDT catalogue (not only likely-area rows). */
+  const [catalogueSupKeys, setCatalogueSupKeys] = useState<Set<string> | null>(
+    null,
+  );
   const [selectedSups, setSelectedSups] = useState<Record<string, boolean>>({});
   const [diffs, setDiffs] = useState<DiffItem[]>([]);
   const [candidates, setCandidates] = useState<AreaRecord[]>([]);
   /** Amber map overlay for verify/diff candidates (Map layers · DIFF). */
   const [showDiffHighlight, setShowDiffHighlight] = useState(true);
+
+  /**
+   * Drop tempo SUP areas that are expired or absent from the AMDT catalogue.
+   * Surfaces removals as Verify/diff `expired` rows. Permanent ENR untouched.
+   */
+  const dropStaleTempoFromWorking = useCallback(
+    (
+      working: AreaRecord[],
+      keys: Set<string> | null,
+      now = new Date(),
+    ): { next: AreaRecord[]; removedCount: number } => {
+      const { kept, removed } = pruneStaleTempoAreas(working, {
+        now,
+        catalogueKeys: keys,
+      });
+      if (!removed.length) return { next: working, removedCount: 0 };
+      setAreas(kept);
+      setDiffs((prev) =>
+        mergeDiffItems(prev, sortDiffItems(staleTempoDiffItems(removed))),
+      );
+      setCandidates((prev) =>
+        prev.filter(
+          (c) =>
+            !removed.some(
+              (h) =>
+                h.area.id.toUpperCase() === c.id.toUpperCase() &&
+                (h.area.provenance.supNumber || "") ===
+                  (c.provenance.supNumber || ""),
+            ),
+        ),
+      );
+      return { next: kept, removedCount: removed.length };
+    },
+    [],
+  );
 
   const setLayerVisible = useCallback((key: LayerKey, on: boolean) => {
     setLayerVisibility((prev) => ({ ...prev, [key]: on === true }));
@@ -255,10 +299,14 @@ export function Workspace() {
     return areas.filter((a) => {
       if (!isLayerVisible(a, layerVisibility)) return false;
       if (!q) return true;
+      const sup = a.provenance.supNumber
+        ? formatSupNumberShort(a.provenance.supNumber).toUpperCase()
+        : "";
       return (
         a.id.includes(q) ||
         a.name.toUpperCase().includes(q) ||
-        a.shortName.toUpperCase().includes(q)
+        a.shortName.toUpperCase().includes(q) ||
+        (!!sup && (sup.includes(q) || `SUP ${sup}`.includes(q)))
       );
     });
   }, [areas, filter, layerVisibility]);
@@ -330,8 +378,19 @@ export function Workspace() {
       const res = await fetch(`/api/amdt/${encodeURIComponent(amdtId)}/sups`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "SUP catalogue failed");
-      const list: SupCatalogueRow[] = data.areaSups?.length ? data.areaSups : data.sups;
+      const allSups: SupCatalogueRow[] = data.sups || [];
+      const list: SupCatalogueRow[] = data.areaSups?.length
+        ? data.areaSups
+        : allSups;
       setSups(list);
+      const keys = catalogueSupKeySet(allSups.length ? allSups : list);
+      setCatalogueSupKeys(keys);
+      const stale = dropStaleTempoFromWorking(areas, keys);
+      if (stale.removedCount) {
+        toast.message(
+          `Removed ${stale.removedCount} stale tempo SUP area(s) (expired or not in AMDT)`,
+        );
+      }
       // Auto-check likely-area SUPs newest-first, but skip any with UAS/UAV/BVLOS
       // in the subject *or* SUP body (e.g. 101/2026 — UAS only in the description).
       const likelyRows = list.filter((x: SupCatalogueRow) => x.likelyArea);
@@ -454,8 +513,14 @@ export function Workspace() {
           !isIfrPlanningOnlyArea(a) &&
           (a.coordinates.length >= 3 || a.boundCircle),
       );
+      const catRows: SupCatalogueRow[] = data.catalogueSups || [];
+      const keys = catalogueSupKeySet(catRows);
+      if (keys) setCatalogueSupKeys(keys);
+      const stale = dropStaleTempoFromWorking(areas, keys ?? catalogueSupKeys);
       setCandidates((prev) => mergeCandidateAreas(prev, drawable));
-      const items = sortDiffItems(diffCandidates(areas, all));
+      const items = sortDiffItems(
+        diffCandidates(stale.next, all),
+      );
       setDiffs((prev) => mergeDiffItems(prev, items));
       const nChanged = items.filter((i) => i.status === "changed").length;
       const nNew = items.filter((i) => i.status === "new").length;
@@ -465,6 +530,9 @@ export function Workspace() {
           ` (ENR ${data.enr51Count} · SUPs ${data.supParsed})` +
           (data.skippedUasSubject
             ? ` · skipped ${data.skippedUasSubject} UAS subject`
+            : "") +
+          (stale.removedCount
+            ? ` · dropped ${stale.removedCount} stale tempo`
             : "") +
           " · accumulated",
       );
@@ -786,9 +854,21 @@ export function Workspace() {
       toast.error("Load a baseline first");
       return;
     }
+    const now = new Date();
+    // Drop expired / catalogue-missing tempo SUPs from working set before export.
+    const { kept: exportAreas, removed: staleHits } = pruneStaleTempoAreas(
+      areas,
+      { now, catalogueKeys: catalogueSupKeys },
+    );
+    if (staleHits.length) {
+      setAreas(exportAreas);
+      setDiffs((prev) =>
+        mergeDiffItems(prev, sortDiffItems(staleTempoDiffItems(staleHits))),
+      );
+    }
     // Tempo merge (incl. SUP Valid-to / EXCLUDED stubs) → accepted permanent ENR blocks → label/name.
     const excludedStubs = [
-      ...areas.filter((a) => a.exclusionReason === "uas_only"),
+      ...exportAreas.filter((a) => a.exclusionReason === "uas_only"),
       ...diffs
         .filter(
           (d) =>
@@ -802,17 +882,22 @@ export function Workspace() {
       applyNameEdits(
         applyLabelEdits(
           applyAcceptedAreaBlocks(
-            mergeTempoSection(rawText, areas, { excludedStubs }),
-            areas,
+            mergeTempoSection(rawText, exportAreas, {
+              excludedStubs,
+              now,
+              catalogueKeys: catalogueSupKeys,
+            }),
+            exportAreas,
           ),
-          areas,
+          exportAreas,
         ),
-        areas,
+        exportAreas,
       ),
     );
-    const moved = areas.filter((a) => a.labelEdited && !a.nameEdited).length;
-    const renamed = areas.filter((a) => a.nameEdited).length;
-    const rewritten = areas.filter(
+    const moved = exportAreas.filter((a) => a.labelEdited && !a.nameEdited)
+      .length;
+    const renamed = exportAreas.filter((a) => a.nameEdited).length;
+    const rewritten = exportAreas.filter(
       (a) =>
         a.section !== "tempo" &&
         !a.rawBlock &&
@@ -832,6 +917,7 @@ export function Workspace() {
     if (rewritten) bits.push(`${rewritten} AIP block(s)`);
     if (renamed) bits.push(`${renamed} renamed`);
     if (moved) bits.push(`${moved} label(s) moved`);
+    if (staleHits.length) bits.push(`${staleHits.length} stale tempo dropped`);
     toast.success(
       bits.length
         ? `Exported TopSkyAreas.txt (Latin-1) · ${bits.join(" · ")}`
@@ -896,7 +982,12 @@ export function Workspace() {
             <select
               className="w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm"
               value={amdtId}
-              onChange={(e) => setAmdtId(e.target.value)}
+              onChange={(e) => {
+                setAmdtId(e.target.value);
+                setCatalogueSupKeys(null);
+                setSups([]);
+                setSelectedSups({});
+              }}
               aria-label="Select AIP AMDT"
             >
               <option value="">Select AMDT…</option>
@@ -1510,6 +1601,9 @@ export function Workspace() {
                           <span className="block text-[11px] text-slate-400">
                             {a.category}
                             {a.section === "tempo" ? " · tempo" : ""}
+                            {a.provenance.supNumber
+                              ? ` · SUP ${formatSupNumberShort(a.provenance.supNumber)}`
+                              : ""}
                             {a.activation
                               ? ` · ${activationLabel(a)}`
                               : ""}

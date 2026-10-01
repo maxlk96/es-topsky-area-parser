@@ -21,6 +21,17 @@ export function supNumberKey(number: string): [number, number] {
   return [b, a];
 }
 
+/** ESAA tempo convention / catalogue match: `182/2025` → `182/25`. */
+export function formatSupNumberShort(supNumber: string): string {
+  const m = String(supNumber).match(/(\d+)\s*[/-]\s*(\d+)/);
+  if (!m) return String(supNumber).trim();
+  const a = Number(m[1]);
+  const b = Number(m[2]);
+  if (b >= 2000) return `${a}/${String(b).slice(-2)}`;
+  if (a >= 2000) return `${b}/${String(a).slice(-2)}`;
+  return `${a}/${b}`;
+}
+
 /** @deprecated Prefer mentionsUasActivity — kept for call sites/tests. */
 export function subjectLooksUas(subject: string): boolean {
   return mentionsUasActivity(subject);

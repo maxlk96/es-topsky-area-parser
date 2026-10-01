@@ -173,4 +173,77 @@ N060.11.13.000 E015.23.53.000
     expect(a1.rawBlock).not.toMatch(/SOARING SECTORS/);
     expect(a1.rawBlock).not.toMatch(/\/{10,}/);
   });
+
+  it("inherits SUP Valid-to across sibling tempo areas (145/26 → ESR500–506)", () => {
+    const text = `
+//      START OF TEMPO R AND D AREAS
+// 305/25 - Valid to 31 DEC 2026
+//ESR505 LUGNET
+AREA:4F:  R505
+NOAIW
+ACTIVE:AUP:ESR505
+LABEL:N060.39.41.953:E015.43.04.598:LUGNET
+LIMITS:0:30
+N060.40.27.000 E015.48.54.000
+N060.34.43.000 E015.48.57.000
+N060.40.27.000 E015.48.54.000
+
+// 145/26 - Valid to 14 SEP 27
+//ESR500 VRÅNGÖ
+AREA:4F:  R500
+NOAIW
+ACTIVE:AUP:ESR500
+LIMITS:0:25
+N057.35.28.000 E011.49.25.000
+N057.33.51.000 E011.50.54.000
+N057.35.28.000 E011.49.25.000
+
+//ESR505 HAKEFJORDEN
+AREA:4F:  R505
+NOAIW
+ACTIVE:AUP:ESR505
+LABEL:N057.55.43.132:E011.33.40.942:HAKEFJORDEN
+LIMITS:0:45
+N058.02.33.000 E011.49.14.000
+N057.59.31.000 E011.47.48.000
+N058.02.33.000 E011.49.14.000
+
+//ESR506 ÖCKERÖ
+AREA:4F:  R506
+NOAIW
+ACTIVE:AUP:ESR506
+LIMITS:0:45
+N057.50.58.000 E011.41.01.000
+N057.47.19.000 E011.40.41.000
+N057.50.58.000 E011.41.01.000
+
+// 146/26 - Valid to 03 SEP 27
+//ESR727 DEGERNÄS
+AREA:4F:  R727
+NOAIW
+ACTIVE:AUP:ESR727
+LIMITS:0:235
+N065.51.52.000 E021.25.27.000
+N065.48.35.000 E021.36.16.000
+N065.51.52.000 E021.25.27.000
+
+//      END OF TEMPO R AND D AREAS
+`;
+    const { areas } = parseTopSkyText(text);
+    const lugnet = areas.find((a) => a.name === "LUGNET")!;
+    const vrango = areas.find((a) => a.id === "ESR500")!;
+    const hake = areas.find((a) => a.name === "HAKEFJORDEN")!;
+    const ockero = areas.find((a) => a.id === "ESR506")!;
+    const deger = areas.find((a) => a.id === "ESR727")!;
+
+    expect(lugnet.provenance.supNumber).toBe("305/25");
+    expect(vrango.provenance.supNumber).toBe("145/26");
+    // Sibling under same Valid-to — previously lost SUP provenance.
+    expect(hake.provenance.supNumber).toBe("145/26");
+    expect(hake.provenance.validTo).toBe("14 SEP 27");
+    expect(ockero.provenance.supNumber).toBe("145/26");
+    // Next SUP header must not contaminate ÖCKERÖ.
+    expect(ockero.provenance.supNumber).not.toBe("146/26");
+    expect(deger.provenance.supNumber).toBe("146/26");
+  });
 });
