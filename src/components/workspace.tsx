@@ -22,7 +22,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { Switch } from "@/components/ui/switch";
 import { diffCandidates } from "@/lib/areas/diff";
 import { parseTopSkyBuffer, parseTopSkyText } from "@/lib/areas/parse-topsky";
 import { encodeLatin1, mergeTempoSection } from "@/lib/areas/write-topsky";
@@ -48,13 +47,13 @@ const DEFAULT_CATEGORY_VISIBILITY: CategoryVisibility = {
   OTHER: false,
 };
 
-const MAP_TOGGLE_CATEGORIES: { key: AreaCategory; label: string }[] = [
-  { key: "R", label: "R" },
-  { key: "D", label: "D" },
-  { key: "PCA", label: "PCA" },
-  { key: "TRA", label: "TRA" },
-  { key: "CBA", label: "CBA" },
-  { key: "OTHER", label: "OTHER" },
+const MAP_TOGGLE_CATEGORIES: { category: AreaCategory; label: string }[] = [
+  { category: "R", label: "R" },
+  { category: "D", label: "D" },
+  { category: "PCA", label: "PCA" },
+  { category: "TRA", label: "TRA" },
+  { category: "CBA", label: "CBA" },
+  { category: "OTHER", label: "OTHER" },
 ];
 
 export function Workspace() {
@@ -76,14 +75,14 @@ export function Workspace() {
   const [diffs, setDiffs] = useState<DiffItem[]>([]);
   const [candidates, setCandidates] = useState<AreaRecord[]>([]);
 
-  const setCategoryVisible = useCallback((key: AreaCategory, on: boolean) => {
-    setCategoryVisibility((prev) => ({ ...prev, [key]: on }));
+  const setCategoryVisible = useCallback((category: AreaCategory, on: boolean) => {
+    setCategoryVisibility((prev) => ({ ...prev, [category]: on === true }));
   }, []);
 
   const visibleList = useMemo(() => {
     const q = filter.trim().toUpperCase();
     return areas.filter((a) => {
-      if (!categoryVisibility[a.category]) return false;
+      if (categoryVisibility[a.category] !== true) return false;
       if (!q) return true;
       return (
         a.id.includes(q) ||
@@ -380,29 +379,34 @@ export function Workspace() {
               Map layers
             </p>
             <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
-              {MAP_TOGGLE_CATEGORIES.map(({ key, label }) => (
-                <div key={key} className="flex items-center justify-between gap-2">
-                  <Label
-                    htmlFor={`layer-${key}`}
-                    className="text-xs text-slate-700"
+              {MAP_TOGGLE_CATEGORIES.map(({ category, label }) => {
+                const on = categoryVisibility[category];
+                return (
+                  <div
+                    key={category}
+                    className="flex items-center justify-between gap-2 rounded px-0.5 py-0.5"
                     title={
-                      key === "OTHER"
+                      category === "OTHER"
                         ? "TCT / STCA / FS and other non-R/D areas"
                         : undefined
                     }
                   >
-                    {label}{" "}
-                    <span className="font-normal text-slate-400">
-                      ({counts[key]})
+                    <span className="text-xs text-slate-700">
+                      {label}{" "}
+                      <span className="font-normal text-slate-400">
+                        ({counts[category]})
+                      </span>
                     </span>
-                  </Label>
-                  <Switch
-                    id={`layer-${key}`}
-                    checked={categoryVisibility[key]}
-                    onCheckedChange={(on) => setCategoryVisible(key, on)}
-                  />
-                </div>
-              ))}
+                    <Checkbox
+                      checked={on}
+                      onCheckedChange={(value) =>
+                        setCategoryVisible(category, value === true)
+                      }
+                      aria-label={`Show ${label} on map`}
+                    />
+                  </div>
+                );
+              })}
             </div>
           </div>
           <Input
@@ -412,8 +416,8 @@ export function Workspace() {
           />
           <ScrollArea className="h-[34%] min-h-[140px] rounded-md border border-slate-200 bg-white">
             <ul className="divide-y divide-slate-100 text-sm">
-              {visibleList.slice(0, 400).map((a) => (
-                <li key={a.id + a.shortName + a.section}>
+              {visibleList.slice(0, 400).map((a, idx) => (
+                <li key={`${a.id}-${a.name}-${a.section}-${idx}`}>
                   <button
                     type="button"
                     className="flex w-full items-start gap-2 px-2 py-1.5 text-left hover:bg-slate-50"

@@ -82,7 +82,7 @@ export function AreaMap({
   const latestRef = useRef({ visible: [] as AreaRecord[], candidates: [] as AreaRecord[] });
 
   const visible = useMemo(
-    () => areas.filter((a) => categoryVisibility[a.category]),
+    () => areas.filter((a) => categoryVisibility[a.category] === true),
     [areas, categoryVisibility],
   );
 
@@ -93,21 +93,30 @@ export function AreaMap({
 
     const map = new MapLibreMap({
       container: ref.current,
+      // Plain land/water basemap — no place, road, or POI labels.
       style: {
         version: 8,
         sources: {
-          osm: {
+          basemap: {
             type: "raster",
-            tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+            tiles: [
+              "https://a.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}@2x.png",
+              "https://b.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}@2x.png",
+              "https://c.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}@2x.png",
+            ],
             tileSize: 256,
-            attribution: "© OpenStreetMap",
+            attribution: "© OpenStreetMap © CARTO",
           },
         },
         layers: [
           {
-            id: "osm",
+            id: "basemap",
             type: "raster",
-            source: "osm",
+            source: "basemap",
+            paint: {
+              "raster-saturation": -0.35,
+              "raster-contrast": -0.1,
+            },
           },
         ],
       },
