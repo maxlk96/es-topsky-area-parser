@@ -27,9 +27,12 @@ import { mentionsUasActivity } from "@/lib/areas/classify";
 import { parseTopSkyBuffer } from "@/lib/areas/parse-topsky";
 import {
   applyLabelEdits,
+  applyNameEdits,
   encodeLatin1,
   mergeTempoSection,
   patchLabelInBlock,
+  patchNameInBlock,
+  toTopSkyName,
 } from "@/lib/areas/write-topsky";
 import type {
   AmdtEntry,
@@ -124,6 +127,8 @@ export function Workspace() {
   const [layersOpen, setLayersOpen] = useState(true);
   /** Share of the list+diff stack used by the area list (rest = verify/diff). */
   const [listPanePct, setListPanePct] = useState(42);
+  const [renamingFid, setRenamingFid] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
   const splitRef = useRef<HTMLDivElement>(null);
   const supDwellTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Bumps only on explicit focus requests so hover re-highlights do not pan. */
@@ -449,14 +454,61 @@ export function Workspace() {
     );
   }, []);
 
+  const beginRename = useCallback((a: AreaRecord) => {
+    const fid = areaFeatureId(a);
+    setSelectedKey(fid);
+    setRenamingFid(fid);
+    // Prefill ALL CAPS (TopSky convention); user can still type ÅÄÖ.
+    setRenameDraft(toTopSkyName(a.name || a.shortName || a.id));
+  }, []);
+
+  const cancelRename = useCallback(() => {
+    setRenamingFid(null);
+    setRenameDraft("");
+  }, []);
+
+  const commitRename = useCallback(() => {
+    if (!renamingFid) return;
+    const name = toTopSkyName(renameDraft);
+    if (!name) {
+      toast.error("Name cannot be empty");
+      return;
+    }
+    setAreas((prev) =>
+      prev.map((a) => {
+        if (areaFeatureId(a) !== renamingFid) return a;
+        const label = a.label ? { ...a.label, text: name } : a.label;
+        const rawBlock = a.rawBlock
+          ? patchNameInBlock(a.rawBlock, a.id, name, label)
+          : a.rawBlock;
+        return {
+          ...a,
+          name,
+          label,
+          nameEdited: true,
+          // LABEL text changed only when a LABEL already existed.
+          labelEdited: a.label ? true : a.labelEdited,
+          rawBlock,
+        };
+      }),
+    );
+    setRenamingFid(null);
+    setRenameDraft("");
+    toast.success(`Renamed to ${name}`);
+  }, [renamingFid, renameDraft]);
+
   const exportFile = () => {
     if (!rawText) {
       toast.error("Load a baseline first");
       return;
     }
-    // Tempo merge, then patch LABEL coords for nudged areas (never invents LABEL lines).
-    const merged = applyLabelEdits(mergeTempoSection(rawText, areas), areas);
-    const edited = areas.filter((a) => a.labelEdited).length;
+    // Tempo merge, then patch LABEL coords / renamed names (never invents LABEL lines).
+    const merged = applyNameEdits(
+      applyLabelEdits(mergeTempoSection(rawText, areas), areas),
+      areas,
+    );
+    const moved = areas.filter((a) => a.labelEdited && !a.nameEdited).length;
+    const renamed = areas.filter((a) => a.nameEdited).length;
     const buf = encodeLatin1(merged);
     const blob = new Blob([Uint8Array.from(buf)], {
       type: "text/plain;charset=ISO-8859-1",
@@ -467,9 +519,12 @@ export function Workspace() {
     a.download = "TopSkyAreas.txt";
     a.click();
     URL.revokeObjectURL(url);
+    const bits: string[] = [];
+    if (renamed) bits.push(`${renamed} renamed`);
+    if (moved) bits.push(`${moved} label(s) moved`);
     toast.success(
-      edited
-        ? `Exported TopSkyAreas.txt (Latin-1) · ${edited} label(s) updated`
+      bits.length
+        ? `Exported TopSkyAreas.txt (Latin-1) · ${bits.join(" · ")}`
         : "Exported TopSkyAreas.txt (Latin-1)",
     );
   };
@@ -807,41 +862,123 @@ export function Workspace() {
                   const fid = areaFeatureId(a);
                   const hovered = hoverIncludes(hoverKey, fid);
                   const selected = selectedKey === fid;
+                  const editing = renamingFid === fid;
                   return (
                   <li key={fid}>
-                    <button
-                      type="button"
-                      data-area-fid={fid}
-                      className={`flex w-full items-start gap-2 px-2 py-1.5 text-left hover:bg-sky-50 ${
+                    {editing ? (
+                      <div className="flex items-start gap-2 bg-sky-50 px-2 py-1.5 ring-1 ring-inset ring-sky-400">
+                        <Badge
+                          variant={a.areaTypeCode === "3" ? "outline" : "secondary"}
+                          className="mt-1 shrink-0"
+                        >
+                          {a.areaTypeCode}
+                        </Badge>
+                        <div className="min-w-0 flex-1 space-y-1">
+                          <p className="font-medium text-slate-800">{a.id}</p>
+                          <Input
+                            autoFocus
+                            value={renameDraft}
+                            onChange={(e) => setRenameDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                commitRename();
+                              } else if (e.key === "Escape") {
+                                e.preventDefault();
+                                cancelRename();
+                              }
+                            }}
+                            placeholder="Display name (ALL CAPS)"
+                            aria-label={`Rename ${a.id}`}
+                            className="h-7 font-mono text-xs uppercase"
+                          />
+                          <p className="text-[10px] text-slate-500">
+                            Updates //ES comment
+                            {a.label ? " + LABEL text" : " (no LABEL — left unlabeled)"}
+                            . ÅÄÖ ok.
+                          </p>
+                          <div className="flex gap-1.5">
+                            <Button
+                              type="button"
+                              size="sm"
+                              className="h-6 px-2 text-xs"
+                              onClick={commitRename}
+                            >
+                              Save
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              className="h-6 px-2 text-xs"
+                              onClick={cancelRename}
+                            >
+                              Cancel
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                    <div
+                      className={`flex w-full items-start gap-1 px-1 py-0.5 ${
                         selected
                           ? "bg-sky-100 ring-1 ring-inset ring-sky-400"
                           : hovered
                             ? "bg-sky-50 ring-1 ring-inset ring-sky-300"
                             : ""
                       }`}
-                      onClick={() => {
-                        setSelectedKey(fid);
-                        requestFocus(a.id);
-                      }}
-                      onMouseEnter={() => setHoverKey(fid)}
-                      onMouseLeave={() => setHoverKey(null)}
                     >
-                      <Badge
-                        variant={a.areaTypeCode === "3" ? "outline" : "secondary"}
-                        className="shrink-0"
+                      <button
+                        type="button"
+                        data-area-fid={fid}
+                        className="flex min-w-0 flex-1 items-start gap-2 px-1 py-1 text-left hover:bg-sky-50/80"
+                        onClick={() => {
+                          setSelectedKey(fid);
+                          requestFocus(a.id);
+                        }}
+                        onMouseEnter={() => setHoverKey(fid)}
+                        onMouseLeave={() => setHoverKey(null)}
+                        onDoubleClick={() => beginRename(a)}
+                        title="Double-click name to rename"
                       >
-                        {a.areaTypeCode}
-                      </Badge>
-                      <span className="min-w-0">
-                        <span className="font-medium">{a.id}</span>{" "}
-                        <span className="text-slate-600">{a.name}</span>
-                        <span className="block text-[11px] text-slate-400">
-                          {a.category}
-                          {a.limits ? ` · ${a.limits[0]}:${a.limits[1]}` : ""}
-                          {a.noaiw ? " · NOAIW" : ""}
+                        <Badge
+                          variant={a.areaTypeCode === "3" ? "outline" : "secondary"}
+                          className="shrink-0"
+                        >
+                          {a.areaTypeCode}
+                        </Badge>
+                        <span className="min-w-0">
+                          <span className="font-medium">{a.id}</span>{" "}
+                          <span className="text-slate-600">
+                            {a.name}
+                            {a.nameEdited ? (
+                              <span className="ml-1 text-[10px] text-amber-700">
+                                renamed
+                              </span>
+                            ) : null}
+                          </span>
+                          <span className="block text-[11px] text-slate-400">
+                            {a.category}
+                            {a.limits ? ` · ${a.limits[0]}:${a.limits[1]}` : ""}
+                            {a.noaiw ? " · NOAIW" : ""}
+                          </span>
                         </span>
-                      </span>
-                    </button>
+                      </button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="mt-0.5 h-6 shrink-0 px-1.5 text-[10px] text-slate-500"
+                        title="Rename display name / LABEL text"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          beginRename(a);
+                        }}
+                      >
+                        Rename
+                      </Button>
+                    </div>
+                    )}
                   </li>
                 );
                 })}

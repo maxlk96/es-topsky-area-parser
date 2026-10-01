@@ -48,7 +48,8 @@ npm start         # serve production build on :43127
 2. Fetch **AMDT** list from LFV eAIP → pick Currently Effective → **Scan SUPs**.
 3. Select temporary R/D SUPs → **Parse → diff** (New / Changed / Excluded UAS / Present).
 4. **Accept** into the working copy → **Export** `TopSkyAreas.txt` (Latin-1; expired tempo removed when validity is known).
-5. Optional: enable **Label placer** (right panel) → drag existing LABELs on the map → Export writes updated `LABEL:` lines (unlabeled areas stay unlabeled).
+5. Optional: **Rename** in the areas list (button or double-click) to fix display name / LABEL text (e.g. R41A → RINGENÄS); Export updates `//ES… NAME` and existing `LABEL:` text (never invents LABEL on unlabeled blocks).
+6. Optional: enable **Label placer** (right panel) → drag existing LABELs on the map → Export writes updated `LABEL:` lines (unlabeled areas stay unlabeled).
 
 ## Domain rules (summary)
 

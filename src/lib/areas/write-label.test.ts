@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   applyLabelEdits,
+  applyNameEdits,
   formatAreaBlock,
   patchLabelInBlock,
+  patchNameInBlock,
+  toTopSkyName,
 } from "./write-topsky";
 import type { AreaRecord } from "./types";
 
@@ -94,5 +97,78 @@ N059.30.00.000 E018.00.00.000
   it("formatAreaBlock omits LABEL when area has none", () => {
     const block = formatAreaBlock(baseArea({ label: undefined }));
     expect(block).not.toMatch(/LABEL:/);
+  });
+});
+
+describe("area rename export", () => {
+  it("toTopSkyName uppercases and keeps ÅÄÖ", () => {
+    expect(toTopSkyName("ringenäs")).toBe("RINGENÄS");
+    expect(toTopSkyName("  örnö  ")).toBe("ÖRNÖ");
+  });
+
+  it("renames //ES header and LABEL text without inventing LABEL", () => {
+    const withLabel = `//ESR41A R41A
+AREA:4F:  R41A
+NOAIW
+LABEL:N056.40.02.182:E012.33.36.559:R41A
+LIMITS:0:95
+N056.40.00.000 E012.33.00.000
+`;
+    const patched = patchNameInBlock(
+      withLabel,
+      "ESR41A",
+      "RINGENÄS",
+      { lat: 56.667, lon: 12.56, text: "R41A" },
+    );
+    expect(patched).toContain("//ESR41A RINGENÄS");
+    expect(patched).toMatch(/LABEL:[^:\n]+:[^:\n]+:RINGENÄS/);
+
+    const unlabeled = `//ESR999 STOCKHOLM
+AREA:3:  R999
+LIMITS:0:25
+N059.30.00.000 E018.00.00.000
+`;
+    const renamedUnlabeled = patchNameInBlock(
+      unlabeled,
+      "ESR999",
+      "ESOS TMA",
+      undefined,
+    );
+    expect(renamedUnlabeled).toContain("//ESR999 ESOS TMA");
+    expect(renamedUnlabeled).not.toMatch(/LABEL:/);
+  });
+
+  it("applyNameEdits updates labeled and unlabeled headers", () => {
+    const file = `//ESR41A R41A
+AREA:4F:  R41A
+LABEL:N056.40.02.182:E012.33.36.559:R41A
+N056.40.00.000 E012.33.00.000
+
+//ESR999 STOCKHOLM
+AREA:3:  R999
+N059.30.00.000 E018.00.00.000
+`;
+    const out = applyNameEdits(file, [
+      baseArea({
+        id: "ESR41A",
+        shortName: "R41A",
+        name: "RINGENÄS",
+        nameEdited: true,
+        label: { lat: 56.667, lon: 12.56, text: "RINGENÄS" },
+      }),
+      baseArea({
+        id: "ESR999",
+        shortName: "R999",
+        name: "NYTT NAMN",
+        areaTypeCode: "3",
+        noaiw: false,
+        nameEdited: true,
+        label: undefined,
+      }),
+    ]);
+    expect(out).toContain("//ESR41A RINGENÄS");
+    expect(out).toMatch(/LABEL:[^:\n]+:[^:\n]+:RINGENÄS/);
+    expect(out).toContain("//ESR999 NYTT NAMN");
+    expect(out.indexOf("LABEL:", out.indexOf("ESR999"))).toBe(-1);
   });
 });

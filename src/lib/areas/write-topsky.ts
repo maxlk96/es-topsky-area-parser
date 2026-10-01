@@ -5,9 +5,15 @@ import { isExpired } from "./validity";
 
 export { isExpired } from "./validity";
 
+/** TopSky LABEL / //ES comment text: ALL CAPS, keep ÅÄÖ (sv-SE). */
+export function toTopSkyName(text: string): string {
+  return text.trim().toLocaleUpperCase("sv-SE");
+}
+
 export function formatLabelLine(label: AreaLabel): string {
   const latLon = toTopSkyCoord(label.lat, label.lon).split(" ");
-  const text = (label.text || "").toUpperCase();
+  // Preserve caller text (rename may keep intentional casing; new blocks usually UPPER).
+  const text = label.text || "";
   return `LABEL:${latLon[0]}:${latLon[1]}:${text}`;
 }
 
@@ -21,6 +27,27 @@ export function patchLabelInBlock(block: string, label: AreaLabel): string {
 }
 
 /**
+ * Update `//ESR41A OLD` comment and existing LABEL text. Never invents a LABEL line.
+ */
+export function patchNameInBlock(
+  block: string,
+  id: string,
+  name: string,
+  label?: AreaLabel | null,
+): string {
+  const idUp = id.toUpperCase();
+  let out = block;
+  const headerRe = new RegExp(`^(//${escapeRegExp(idUp)})(\\b[^\\n]*)`, "im");
+  if (headerRe.test(out)) {
+    out = out.replace(headerRe, `$1 ${name}`);
+  }
+  if (label && /(^|\n)LABEL:/i.test(out)) {
+    out = patchLabelInBlock(out, { ...label, text: name });
+  }
+  return out;
+}
+
+/**
  * Patch LABEL coordinates for labelEdited areas across the whole file.
  * Skips areas with no LABEL line in their block — never invents labels.
  */
@@ -28,34 +55,61 @@ export function applyLabelEdits(fileText: string, areas: AreaRecord[]): string {
   let text = fileText.replace(/\r\n/g, "\n");
   for (const area of areas) {
     if (!area.labelEdited || !area.label) continue;
-    text = patchLabelForAreaInFile(text, area);
+    text = patchBlockInFile(text, area, (block) =>
+      patchLabelInBlock(block, area.label!),
+    );
   }
   return text;
 }
 
-function patchLabelForAreaInFile(text: string, area: AreaRecord): string {
+/**
+ * Patch //ES… NAME comments and LABEL text for nameEdited areas.
+ * Unlabeled areas: header/name only — never invents LABEL.
+ */
+export function applyNameEdits(fileText: string, areas: AreaRecord[]): string {
+  let text = fileText.replace(/\r\n/g, "\n");
+  for (const area of areas) {
+    if (!area.nameEdited) continue;
+    text = patchBlockInFile(text, area, (block) =>
+      patchNameInBlock(block, area.id, area.name, area.label),
+    );
+  }
+  return text;
+}
+
+function findAreaBlock(
+  text: string,
+  area: AreaRecord,
+): { start: number; block: string } | null {
   const id = area.id.toUpperCase();
-  // Prefer designator comment header //ESR… / //ESD…
   const headerRe = new RegExp(`//${id}\\b[^\\n]*\\n`, "i");
   const headerMatch = headerRe.exec(text);
   let start = headerMatch?.index ?? -1;
   if (start < 0) {
-    // Fall back to AREA: line containing short name
     const areaRe = new RegExp(
       `^AREA:[^:\\n]+:\\s*${escapeRegExp(area.shortName)}\\s*$`,
       "im",
     );
     const m = areaRe.exec(text);
-    if (!m || m.index == null) return text;
+    if (!m || m.index == null) return null;
     start = m.index;
   }
-  // Block ends at the next //ES… designator comment (not at this block's AREA: line).
   const rest = text.slice(start);
   const endRel = rest.search(/\n\/\/ES[A-Z0-9]/i);
   const block = endRel >= 0 ? rest.slice(0, endRel) : rest;
-  if (!/(^|\n)LABEL:/i.test(block)) return text; // unlabeled — leave untouched
-  const patched = patchLabelInBlock(block, area.label!);
-  return text.slice(0, start) + patched + text.slice(start + block.length);
+  return { start, block };
+}
+
+function patchBlockInFile(
+  text: string,
+  area: AreaRecord,
+  patch: (block: string) => string,
+): string {
+  const found = findAreaBlock(text, area);
+  if (!found) return text;
+  const patched = patch(found.block);
+  if (patched === found.block) return text;
+  return text.slice(0, found.start) + patched + text.slice(found.start + found.block.length);
 }
 
 function escapeRegExp(s: string): string {
@@ -65,7 +119,7 @@ function escapeRegExp(s: string): string {
 export function formatAreaBlock(area: AreaRecord): string {
   const lines: string[] = [];
   const designator = area.id.toUpperCase();
-  const labelText = (area.label?.text || area.name).toUpperCase();
+  const labelText = toTopSkyName(area.label?.text || area.name);
   lines.push(`//${designator} ${labelText}`);
   // Two leading spaces for R/D AMS sort
   const pad =
@@ -145,11 +199,14 @@ export function mergeTempoSection(
     .map((a) => {
       // Prefer preserving rawBlock for untouched topsky areas
       if (a.provenance.source === "topsky" && a.rawBlock && !a.exclusionReason) {
-        if (a.labelEdited && a.label) {
+        let block = a.rawBlock;
+        if (a.nameEdited) {
+          block = patchNameInBlock(block, a.id, a.name, a.label);
+        } else if (a.labelEdited && a.label) {
           // Patch LABEL only — never insert if the baseline block had none.
-          return patchLabelInBlock(a.rawBlock, a.label).trimEnd() + "\n";
+          block = patchLabelInBlock(block, a.label);
         }
-        return a.rawBlock.trimEnd() + "\n";
+        return block.trimEnd() + "\n";
       }
       return formatAreaBlock(a);
     })
@@ -158,6 +215,7 @@ export function mergeTempoSection(
   void before;
   void afterStartLine;
   void endLineStart;
+  void after;
 
   const head = text.slice(0, afterStartLine + 1);
   const tail = text.slice(endLineStart);

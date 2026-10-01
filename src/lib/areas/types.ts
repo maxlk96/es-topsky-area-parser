@@ -42,6 +42,8 @@ export interface AreaRecord {
   label?: AreaLabel;
   /** True when the user nudged an existing LABEL in the label placer. Never invent labels. */
   labelEdited?: boolean;
+  /** True when the user renamed display name / LABEL text (not the designator id). */
+  nameEdited?: boolean;
   mapDefaultVisible: boolean;
   noaiw: boolean;
   boundCircle?: { lat: number; lon: number; radiusNm: number };
