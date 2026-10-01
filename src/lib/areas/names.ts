@@ -1,5 +1,10 @@
 import { shortFromDesignator } from "./classify";
 
+/** ESR03 → ESR3 (ENR leading zeros); ESR117 / ESD309 unchanged. */
+export function normalizeDesignator(id: string): string {
+  return id.replace(/^(ES[RD])0+(\d)/i, "$1$2").toUpperCase();
+}
+
 /** True when name is empty or only the designator / short id (R41A, ESR41A). */
 export function isDesignatorOnlyName(
   name: string | undefined | null,

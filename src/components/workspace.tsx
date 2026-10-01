@@ -380,6 +380,47 @@ export function Workspace() {
     }
   };
 
+  /**
+   * Reload ENR 5.1 permanent R/D + likely tempo SUPs from the selected AMDT,
+   * then diff against the currently loaded TopSky baseline. Does not wipe
+   * the working set (OTHER / unlabeled blocks stay until Accept).
+   */
+  const reloadFromAip = async () => {
+    if (!amdtId) {
+      toast.error("Pick an AMDT first");
+      return;
+    }
+    if (!areas.length) {
+      toast.error("Load a TopSkyAreas baseline (GitHub or local) first");
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch(
+        `/api/amdt/${encodeURIComponent(amdtId)}/reload`,
+        { method: "POST" },
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "AIP reload failed");
+      const found = (data.areas as AreaRecord[]).filter(
+        (a) => a.coordinates.length >= 3 || a.boundCircle,
+      );
+      setCandidates(found);
+      const items = diffCandidates(areas, found);
+      setDiffs(items);
+      toast.success(
+        `AIP reload: ENR 5.1 ${data.enr51Count} · SUPs ${data.supParsed} → ${items.length} diff rows` +
+          (data.skippedUasSubject
+            ? ` · skipped ${data.skippedUasSubject} UAS subject`
+            : ""),
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "AIP reload failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const acceptDiff = (item: DiffItem) => {
     if (item.status !== "new" && item.status !== "changed") return;
     if (item.candidate.needsReview === "missing_name") {
@@ -395,7 +436,8 @@ export function Workspace() {
       );
       const accepted: AreaRecord = {
         ...item.candidate,
-        section: "tempo",
+        // Preserve ENR permanent vs tempo SUP section — never force OTHER into tempo.
+        section: item.candidate.section ?? "tempo",
         mapDefaultVisible: true,
       };
       if (idx >= 0) next[idx] = accepted;
@@ -433,7 +475,7 @@ export function Workspace() {
         );
         const accepted: AreaRecord = {
           ...item.candidate,
-          section: "tempo",
+          section: item.candidate.section ?? "tempo",
           mapDefaultVisible: true,
         };
         if (idx >= 0) next[idx] = accepted;
@@ -668,6 +710,20 @@ export function Workspace() {
             <Button size="sm" className="w-full" onClick={scanSups} disabled={!amdtId || loading}>
               Scan SUPs for areas
             </Button>
+            <Button
+              size="sm"
+              variant="default"
+              className="w-full"
+              onClick={reloadFromAip}
+              disabled={!amdtId || !areas.length || loading}
+              title="ENR 5.1 permanent R/D + likely tempo SUPs → diff vs loaded TopSky baseline"
+            >
+              Reload from AIP → diff
+            </Button>
+            <p className="text-[10px] leading-snug text-slate-500">
+              Reloads ENR 5.1 + area SUPs into Verify/diff only — does not wipe OTHER /
+              unlabeled blocks. Accept is still per-row.
+            </p>
             <Button
               size="sm"
               variant="secondary"
@@ -1170,6 +1226,11 @@ export function Workspace() {
                   </div>
                   <p className="text-[11px] text-slate-500">
                     {d.candidate.name}
+                    {d.candidate.provenance.source === "enr51"
+                      ? " · ENR 5.1"
+                      : d.candidate.provenance.source === "sup"
+                        ? " · SUP"
+                        : ""}
                     {d.candidate.limits
                       ? ` · LIMITS ${d.candidate.limits.join(":")}`
                       : ""}
