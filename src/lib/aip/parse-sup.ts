@@ -1,6 +1,7 @@
 import centroid from "@turf/centroid";
 import { polygon } from "@turf/helpers";
 import {
+  hasAviationFlyingWording,
   inferAreaTypeFromRemarks,
   isUasOnlyText,
   shortFromDesignator,
@@ -228,10 +229,11 @@ function buildAreaFromSection(
 
   const limits = parseLimitsFromChunk(section.chunk, text);
   const inferred = inferAreaTypeFromRemarks(remarks);
-  const flyingSup = /military aviation|aviation operations|flygverksamhet/i.test(
-    text,
-  );
+  // AUP + NOAIW only when SUP purpose text has clear aviation/flying wording
+  // (not bare “military operations” — e.g. SUP 179/2026 Stenshuvud).
+  const flyingSup = hasAviationFlyingWording(text);
   const useAup = flyingSup || inferred.reason === "flying_or_ats_permission";
+  const noaiw = flyingSup || inferred.noaiw;
 
   let label: AreaRecord["label"];
   // Full circles: LABEL at centre, not densified-ring centroid.
@@ -264,10 +266,10 @@ function buildAreaFromSection(
     coordinates,
     limits,
     activation: useAup ? { type: "AUP", key: id } : { type: "MANUAL" },
-    directives: inferred.noaiw ? ["NOAIW"] : [],
+    directives: noaiw ? ["NOAIW"] : [],
     label,
     mapDefaultVisible: true,
-    noaiw: inferred.noaiw,
+    noaiw,
     boundCircle,
     circleSpacingDeg,
     provenance: {

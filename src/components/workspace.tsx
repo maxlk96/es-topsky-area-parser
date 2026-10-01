@@ -34,7 +34,11 @@ import {
 import { diffCandidates, sortDiffItems } from "@/lib/areas/diff";
 import { mergePcaAcceptPreservingLabel } from "@/lib/aip/parse-pca-echarts";
 import { activationLabel } from "@/lib/areas/activation";
-import { areaOmitsLabel, mentionsUasActivity } from "@/lib/areas/classify";
+import {
+  areaOmitsLabel,
+  mentionsUasActivity,
+  mergeEnrAcceptPreservingNoaiw,
+} from "@/lib/areas/classify";
 import { parseTopSkyBuffer } from "@/lib/areas/parse-topsky";
 import {
   applyAcceptedAreaBlocks,
@@ -501,8 +505,10 @@ export function Workspace() {
       existing?.section ??
       candidate.section ??
       (candidate.provenance.source === "enr51" ? "other" : "tempo");
+    // ENR Accept: preserve baseline noaiw for legacy permanent 4F without NOAIW.
+    const mergedEnr = mergeEnrAcceptPreservingNoaiw(candidate, existing);
     let accepted: AreaRecord = {
-      ...candidate,
+      ...mergedEnr,
       section,
       mapDefaultVisible: true,
       // Force full block rewrite on export (geometry / LIMITS / name).

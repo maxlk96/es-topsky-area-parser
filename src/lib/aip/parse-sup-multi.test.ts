@@ -21,6 +21,23 @@ SFC
 </body></html>
 `;
 
+/** SUP 179/2026-style: purpose is “military operations” only (no aviation). */
+const SUP_179_MILITARY_OPS_HTML = `
+<html><body>
+Temporary restricted area – ESR527 STENSHUVUD
+Temporary restricted area ESR527 Stenshuvud established for military operations.
+Flight within the area prohibited for all non-participating ACFT.
+The following traffic on mission is exempted after permission from Malmö ACC:
+Military flights, Police, Ambulance.
+ESR527 STENSHUVUD
+Vertical limit
+554000N 0142000E – 554000N 0143000E – 553500N 0143000E – 553500N 0142000E –
+554000N 0142000E.
+4500 ft AMSL
+SFC
+</body></html>
+`;
+
 describe("multi-area SUP parse", () => {
   it("extracts separate geometry sections (not title-only mentions)", () => {
     const text = MULTI_SUP_HTML.replace(/<[^>]+>/g, " ");
@@ -49,5 +66,25 @@ describe("multi-area SUP parse", () => {
     expect(a797.coordinates.length).toBeGreaterThanOrEqual(4);
     // Rings should not share the same first vertex set
     expect(a794.coordinates[0]).not.toEqual(a797.coordinates[0]);
+    // Military aviation operations → NOAIW + AUP
+    expect(a794.noaiw).toBe(true);
+    expect(a794.directives).toContain("NOAIW");
+    expect(a794.activation).toEqual({ type: "AUP", key: "ESR794" });
+    expect(a797.noaiw).toBe(true);
+  });
+
+  it("SUP 179-style military operations does not get NOAIW", () => {
+    const areas = parseSupHtml(SUP_179_MILITARY_OPS_HTML, {
+      amdtId: "test",
+      supNumber: "179/2026",
+      href: "AIP SUP 179-2026/ES-SUP-en-GB.html",
+    });
+    expect(areas).toHaveLength(1);
+    const a = areas[0]!;
+    expect(a.id).toBe("ESR527");
+    expect(a.noaiw).toBe(false);
+    expect(a.directives).not.toContain("NOAIW");
+    expect(a.activation).toEqual({ type: "MANUAL" });
+    expect(a.areaTypeCode).toBe("4F");
   });
 });

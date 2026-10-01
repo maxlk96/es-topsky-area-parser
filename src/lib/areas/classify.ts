@@ -113,6 +113,24 @@ export function isUasOnlyText(text: string): boolean {
   );
 }
 
+/**
+ * Clear aviation / flying purpose language (not bare “military operations”).
+ * Used for NOAIW on tempo SUPs and for flying inference on ENR remarks.
+ *
+ * Matches: “military aviation operations”, “aviation operations”,
+ * “flygverksamhet”, “military aviation”, “Military activities including … aviation”.
+ * Does **not** match: “military operations” alone, “Flight within the area…”,
+ * or exemption lists that merely say “Military flights”.
+ */
+export function hasAviationFlyingWording(text: string): boolean {
+  return (
+    /(?:military\s+)?aviation\s+operations/i.test(text) ||
+    /military\s+aviation\b/i.test(text) ||
+    /flygverksamhet/i.test(text) ||
+    /Military activities including(?:[^.]{0,100})aviation/i.test(text)
+  );
+}
+
 /** Flying / ATS permission → 4F+NOAIW; Transportstyrelsen/nature/etc → 3. */
 export function inferAreaTypeFromRemarks(remarks: string): {
   areaTypeCode: string;
@@ -125,10 +143,7 @@ export function inferAreaTypeFromRemarks(remarks: string): {
   if (uas) {
     return { areaTypeCode: "4F", noaiw: true, confidence: "high", reason: "uas_only" };
   }
-  const flying =
-    /aviation operations|flygverksamhet|military aviation|Military activities including/i.test(
-      t,
-    );
+  const flying = hasAviationFlyingWording(t);
   const atsPerm = /Permission obtainable from|Tillstånd kan erhållas från/i.test(t);
   const transportstyrelsen =
     /Special permission by Swedish Transport Agency|Särskilda tillstånd från Transportstyrelsen/i.test(
@@ -155,11 +170,57 @@ export function inferAreaTypeFromRemarks(remarks: string): {
       reason: "no_ats_crossing_authority",
     };
   }
-  // Default for tempo mil SUP-style unknown: 4F+NOAIW with low confidence
+  // Bare “military operations” (e.g. SUP 179/2026) → 4F, no NOAIW.
+  // NOAIW requires clear aviation/flying wording above — not the default.
+  if (/\bmilitary\s+operations\b/i.test(t) && !flying) {
+    return {
+      areaTypeCode: "4F",
+      noaiw: false,
+      confidence: "medium",
+      reason: "military_non_aviation",
+    };
+  }
+  // Unknown tempo/remarks: 4F without inventing NOAIW.
   return {
     areaTypeCode: "4F",
-    noaiw: true,
+    noaiw: false,
     confidence: "low",
-    reason: "default_tempo_flying",
+    reason: "default_no_aviation_wording",
+  };
+}
+
+/**
+ * ENR Accept: keep baseline `noaiw` (and NOAIW directive / activation) when
+ * overwriting a known permanent 4F — covers the 33 legacy 4F without NOAIW.
+ */
+export function mergeEnrAcceptPreservingNoaiw(
+  candidate: AreaRecord,
+  existing?: AreaRecord,
+): AreaRecord {
+  if (
+    !existing ||
+    candidate.provenance?.source !== "enr51" ||
+    existing.areaTypeCode !== "4F" ||
+    candidate.areaTypeCode !== "4F"
+  ) {
+    return candidate;
+  }
+  const noaiw = existing.noaiw;
+  const directives = noaiw
+    ? Array.from(
+        new Set([
+          "NOAIW",
+          ...(candidate.directives || []).filter((d) => d !== "NOAIW"),
+        ]),
+      )
+    : (candidate.directives || []).filter((d) => d !== "NOAIW");
+  return {
+    ...candidate,
+    noaiw,
+    directives,
+    // Keep baseline activation when the area historically had no NOAIW/AUP pair.
+    activation: noaiw
+      ? candidate.activation
+      : (existing.activation ?? candidate.activation),
   };
 }
