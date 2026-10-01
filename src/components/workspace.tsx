@@ -373,6 +373,7 @@ export function Workspace() {
         found.filter(
           (a) =>
             a.exclusionReason !== "fir_border" &&
+            a.exclusionReason !== "uas_only" &&
             (a.coordinates.length >= 3 || a.boundCircle),
         ),
       );
@@ -414,6 +415,7 @@ export function Workspace() {
         all.filter(
           (a) =>
             a.exclusionReason !== "fir_border" &&
+            a.exclusionReason !== "uas_only" &&
             (a.coordinates.length >= 3 || a.boundCircle),
         ),
       );

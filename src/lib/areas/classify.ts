@@ -68,17 +68,33 @@ export function shortFromDesignator(id: string): string {
 
 /** Any UAS/UAV/BVLOS-style mention (subject or body) — skip auto-select. */
 export function mentionsUasActivity(text: string): boolean {
-  return /\bUAS\b|\bUAV\b|\bBVLOS\b|\bRPAS\b|\bDRONES?\b/i.test(text);
+  return (
+    /\bUAS\b|\bUAV\b|\bBVLOS\b|\bRPAS\b|\bDRONES?\b/i.test(text) ||
+    /drönar|dronar/i.test(text)
+  );
 }
 
-/** UAS-only → not for VATSIM (stricter than mentionsUasActivity). */
+/**
+ * UAS/drone-only → not for VATSIM (stricter than mentionsUasActivity).
+ * Includes permanent ENR drone-prohibition R areas (e.g. ESR113 Stockholm)
+ * already marked "(UAV only)" in TopSkyAreas.txt.
+ */
 export function isUasOnlyText(text: string): boolean {
   const t = text.toUpperCase();
+  // Fold Swedish vowels so DRÖNAR… matches after uppercasing.
+  const n = t.replace(/[ÅÄ]/g, "A").replace(/Ö/g, "O");
   return (
     /\bONLY\s+UAS\b/.test(t) ||
     /\bUAS\s*\/\s*UAV\s+ONLY\b/.test(t) ||
+    /\bUAV\s+ONLY\b/.test(t) ||
+    /\bUAS\s+ONLY\b/.test(t) ||
     (/\bBVLOS\b/.test(t) && /\bUAS\b/.test(t) && !/\bMILITARY\s+AVIATION\b/.test(t)) ||
-    /\bEXCLUDED\.\s*ONLY\s+UAS\b/.test(t)
+    /\bEXCLUDED\.\s*ONLY\s+UAS\b/.test(t) ||
+    // ESR113 Stockholm / ESR127 Solna style — sole purpose is drone restriction
+    /\bDRONE\s+FLYING\s+IS\s+PROHIBITED\b/.test(t) ||
+    /\bFLYING\s+WITH\s+DRONES\s+IS\s+PROHIBITED\b/.test(t) ||
+    /DRONARFLYGNING\s+AR\s+FORBJUDEN/.test(n) ||
+    /FLYGNING\s+MED\s+DRONARE\s+AR\s+FORBJUDEN/.test(n)
   );
 }
 

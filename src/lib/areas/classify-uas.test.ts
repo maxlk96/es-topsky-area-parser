@@ -30,4 +30,26 @@ describe("isUasOnlyText", () => {
   it("still recognizes classic UAS-only wording", () => {
     expect(isUasOnlyText("EXCLUDED. ONLY UAS operations.")).toBe(true);
   });
+
+  it("flags ESR113-style drone-prohibition R areas (UAV only)", () => {
+    expect(
+      isUasOnlyText(
+        "ESR113 STOCKHOLM\nDrönarflygning är förbjuden.\nDrone flying is prohibited.",
+      ),
+    ).toBe(true);
+    expect(
+      isUasOnlyText(
+        "ESR127 SOLNA\nFlygning med drönare är förbjuden.\nFlying with drones is prohibited.",
+      ),
+    ).toBe(true);
+    expect(isUasOnlyText("//ESR113 Stockholm (UAV only)")).toBe(true);
+  });
+
+  it("does not treat military R that merely include UAS as UAS-only", () => {
+    expect(
+      isUasOnlyText(
+        "Military activities including aviation operations with UAS up to 400 ft AGL. Permission obtainable from STOCKHOLM ACC.",
+      ),
+    ).toBe(false);
+  });
 });

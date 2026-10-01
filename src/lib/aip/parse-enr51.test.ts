@@ -30,6 +30,13 @@ ESR1 ESRANGE
 UNL
 GND
 Rymdbas.
+ESR113 STOCKHOLM
+592015N 0180200E - 592010N 0180509E - 591914N 0180429E - 591940N 0180141E to point of origin.
+1000 ft AMSL
+GND
+Drönarflygning är förbjuden.
+Drone flying is prohibited.
+Special authorization required from the Swedish Transport Agency except for drones.
 </body></html>
 `;
 
@@ -80,6 +87,14 @@ describe("parseEnr51Html", () => {
     expect(r1.name).toBe("ESRANGE");
     expect(r1.exclusionReason).toBe("fir_border");
     expect(r1.coordinates).toEqual([]);
+  });
+
+  it("excludes ESR113 drone-prohibition area as uas_only", () => {
+    const areas = parseEnr51Html(ENR_SNIPPET, { amdtId: "test-amdt" });
+    const r113 = areas.find((a) => a.id === "ESR113")!;
+    expect(r113).toBeTruthy();
+    expect(r113.exclusionReason).toBe("uas_only");
+    expect(r113.coordinates).toEqual([]);
   });
 });
 

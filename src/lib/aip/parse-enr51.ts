@@ -2,6 +2,7 @@ import centroid from "@turf/centroid";
 import { polygon } from "@turf/helpers";
 import {
   inferAreaTypeFromRemarks,
+  isUasOnlyText,
   shortFromDesignator,
 } from "@/lib/areas/classify";
 import {
@@ -146,6 +147,34 @@ export function parseEnr51Html(
     if (coordinates.length < 3 && !boundCircle) continue;
 
     const limits = parseLimits(chunk);
+    // Drone/UAV-only R areas (e.g. ESR113 Stockholm) — not for VATSIM; keep out of Accept.
+    if (isUasOnlyText(chunk)) {
+      seen.add(id);
+      areas.push({
+        id,
+        shortName,
+        name: nameUp,
+        category,
+        areaTypeCode: "3",
+        coordinates: [],
+        limits,
+        activation: { type: "NONE" },
+        directives: [],
+        mapDefaultVisible: false,
+        noaiw: false,
+        provenance: {
+          source: "enr51",
+          amdtId: meta.amdtId,
+          rawComment: chunk.slice(0, 400),
+        },
+        exclusionReason: "uas_only",
+        needsReview,
+        rawBlock: "",
+        section: "other",
+      });
+      continue;
+    }
+
     const inferred = inferAreaTypeFromRemarks(chunk);
     // Permanent ENR R/D with flying/military often 4F; circle urban (Nynäshamn) often 3.
     // Prefer remark inference; default permanent R/D without ATS keywords → keep inferred.
