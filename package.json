@@ -2,10 +2,13 @@
   "name": "es-topsky-area-manager",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "dev": "next dev --port 43127",
+    "dev": "next dev --hostname 0.0.0.0 --port 43127",
     "build": "next build",
-    "start": "next start --port 43127",
+    "start": "next start --hostname 0.0.0.0 --port 43127",
     "lint": "eslint",
     "test": "vitest run"
   },

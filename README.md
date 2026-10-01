@@ -2,18 +2,44 @@
 
 Web tool for VATSIM Scandinavia ESAA maintainers: load `TopSkyAreas.txt`, map areas with HMI-aligned colours, ingest LFV AIP SUPs, diff/verify, Accept, and export Latin-1 tempo R/D blocks.
 
-## Run locally
+## Prerequisites
+
+- **Node.js 20+** (22 LTS works; check with `node -v`)
+- **npm** 10+ (ships with Node)
+- Network access to LFV eAIP (`aro.lfv.se`) when fetching AMDT/SUPs
+
+## Run on your machine
 
 ```bash
+# After you create/link a GitHub repo from this Cursor project:
+git clone <your-repo-url>
+cd <repo>
+git checkout cursor/area-manager-mvp-5762
+
 npm install
 npm run dev
 ```
 
-Open [http://127.0.0.1:43127](http://127.0.0.1:43127).
+Open **[http://127.0.0.1:43127](http://127.0.0.1:43127)** in your browser.
+
+Dev server binds to port **43127** (not 3000).
+
+### Without cloning yet
+
+If this project still has no durable GitHub remote: use **Create repo** in the Cursor agent view, then clone as above. Alternatively unpack a source archive from the agent artifacts (if attached), then:
 
 ```bash
-npm test    # unit tests (coords, LIMITS, TopSky parse)
-npm run build
+cd es-topsky-area-manager   # or the unpacked folder
+npm install
+npm run dev
+```
+
+### Useful scripts
+
+```bash
+npm test          # unit tests (coords, LIMITS, TopSky parse)
+npm run build     # production build
+npm start         # serve production build on :43127
 ```
 
 ## MVP workflow
