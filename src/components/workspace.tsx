@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 const AreaMap = dynamic(
@@ -44,8 +44,6 @@ import {
   type LayerKey,
   type LayerVisibility,
 } from "@/lib/areas/map-layers";
-import { ExternalLinkIcon } from "lucide-react";
-
 type BaselineKind = "github" | "local";
 
 export function Workspace() {
@@ -61,6 +59,27 @@ export function Workspace() {
   const [hoverKey, setHoverKey] = useState<string | null>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
+  /** Last SUP opened via hover — reset on mouse leave so re-hover can open again. */
+  const supHoverOpened = useRef<string | null>(null);
+
+  const openSupOnHover = useCallback(
+    (folder: string | undefined, href: string | undefined) => {
+      if (!folder || !href) return;
+      const key = `${folder}::${href}`;
+      if (supHoverOpened.current === key) return;
+      const win = window.open(
+        amdtSupUrl(folder, href),
+        "_blank",
+        "noopener,noreferrer",
+      );
+      if (win) {
+        supHoverOpened.current = key;
+      } else {
+        toast.message("Allow pop-ups to open SUPs on hover");
+      }
+    },
+    [],
+  );
 
   // When an area is selected from the map, scroll it into view in the list.
   useEffect(() => {
@@ -353,33 +372,27 @@ export function Workspace() {
                   key={s.href}
                   className="flex items-start gap-2 rounded-md border border-transparent px-1 py-1 hover:border-slate-200 hover:bg-white"
                 >
-                  <label className="flex min-w-0 flex-1 cursor-pointer gap-2">
-                    <Checkbox
-                      checked={!!selectedSups[s.href]}
-                      onCheckedChange={(v) =>
-                        setSelectedSups((prev) => ({ ...prev, [s.href]: !!v }))
-                      }
-                    />
-                    <span className="text-xs leading-snug">
-                      <span className="font-medium text-slate-800">{s.number}</span>{" "}
-                      <span className="text-slate-600">{s.subject.slice(0, 90)}</span>
-                    </span>
-                  </label>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    className="h-7 shrink-0 gap-1 px-2 text-xs"
-                    disabled={!amdtId}
-                    title="Open SUP to decide if relevant, then select/deselect"
-                    onClick={() => {
-                      if (!amdtId) return;
-                      window.open(amdtSupUrl(amdtId, s.href), "_blank", "noopener,noreferrer");
+                  <Checkbox
+                    className="mt-0.5"
+                    checked={!!selectedSups[s.href]}
+                    onCheckedChange={(v) =>
+                      setSelectedSups((prev) => ({ ...prev, [s.href]: !!v }))
+                    }
+                    aria-label={`Select SUP ${s.number}`}
+                  />
+                  <div
+                    className="min-w-0 flex-1 rounded px-0.5 text-xs leading-snug hover:bg-sky-50"
+                    title="Hover to open SUP in LFV eAIP — checkbox selects for parse"
+                    onMouseEnter={() => openSupOnHover(amdtId, s.href)}
+                    onMouseLeave={() => {
+                      supHoverOpened.current = null;
                     }}
                   >
-                    <ExternalLinkIcon className="size-3.5" />
-                    Open
-                  </Button>
+                    <span className="font-medium text-sky-800 underline decoration-sky-300/80 underline-offset-2">
+                      {s.number}
+                    </span>{" "}
+                    <span className="text-slate-600">{s.subject.slice(0, 90)}</span>
+                  </div>
                 </div>
               ))}
               {!sups.length && (
@@ -551,14 +564,7 @@ export function Workspace() {
                         (d.candidate.provenance.supNumber || "").replace("/", "-"),
                       ),
                   )?.href;
-                const openSup = () => {
-                  const folder = d.candidate.provenance.amdtId || amdtId;
-                  if (!folder || !supHref) {
-                    toast.message("No SUP link for this candidate");
-                    return;
-                  }
-                  window.open(amdtSupUrl(folder, supHref), "_blank", "noopener,noreferrer");
-                };
+                const supFolder = d.candidate.provenance.amdtId || amdtId;
                 return (
                 <li
                   key={d.candidate.id + d.status + fid}
@@ -601,29 +607,38 @@ export function Workspace() {
                     {d.candidate.limits
                       ? ` · LIMITS ${d.candidate.limits.join(":")}`
                       : ""}
-                    {d.candidate.provenance.supNumber
-                      ? ` · SUP ${d.candidate.provenance.supNumber}`
-                      : ""}
+                    {d.candidate.provenance.supNumber && (
+                      <>
+                        {" · "}
+                        <span
+                          className={
+                            supHref
+                              ? "font-medium text-sky-700 underline-offset-2 hover:underline"
+                              : undefined
+                          }
+                          title={
+                            supHref
+                              ? "Hover to open SUP in LFV eAIP"
+                              : undefined
+                          }
+                          onMouseEnter={() =>
+                            openSupOnHover(supFolder, supHref)
+                          }
+                          onMouseLeave={() => {
+                            supHoverOpened.current = null;
+                          }}
+                        >
+                          SUP {d.candidate.provenance.supNumber}
+                        </span>
+                      </>
+                    )}
                     {d.notes.length ? ` — ${d.notes.join("; ")}` : ""}
                   </p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {(d.status === "new" || d.status === "changed") && (
-                      <Button size="sm" variant="outline" onClick={() => acceptDiff(d)}>
-                        Accept
-                      </Button>
-                    )}
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="gap-1"
-                      onClick={openSup}
-                      disabled={!supHref}
-                      title="Open SUP to decide relevance"
-                    >
-                      <ExternalLinkIcon className="size-3.5" />
-                      Open SUP
+                  {(d.status === "new" || d.status === "changed") && (
+                    <Button size="sm" variant="outline" onClick={() => acceptDiff(d)}>
+                      Accept
                     </Button>
-                  </div>
+                  )}
                 </li>
                 );
               })}
