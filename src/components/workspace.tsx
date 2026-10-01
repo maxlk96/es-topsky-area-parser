@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 const AreaMap = dynamic(
@@ -22,8 +22,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { subjectLooksUas } from "@/lib/aip/sup-catalogue";
 import { diffCandidates } from "@/lib/areas/diff";
+import { mentionsUasActivity } from "@/lib/areas/classify";
 import { parseTopSkyBuffer, parseTopSkyText } from "@/lib/areas/parse-topsky";
 import { encodeLatin1, mergeTempoSection } from "@/lib/areas/write-topsky";
 import type {
@@ -52,11 +52,50 @@ type SupViewer = {
   label: string;
 };
 
+type HoverKey = string | string[] | null;
+
 function supViewerSrc(viewer: SupViewer): string {
   return (
     `/api/amdt/${encodeURIComponent(viewer.folder)}/sup/html` +
     `?path=${encodeURIComponent(viewer.href)}`
   );
+}
+
+function designatorsFromText(text: string): string[] {
+  const hits = text.toUpperCase().match(/\bES[RD]\d{2,4}[A-Z]?\b/g) ?? [];
+  return [...new Set(hits)];
+}
+
+/** Areas/candidates linked to a catalogue SUP (by designator in subject or provenance). */
+function areasForCatalogueSup(
+  s: SupCatalogueRow,
+  areas: AreaRecord[],
+  candidates: AreaRecord[],
+): AreaRecord[] {
+  const ids = new Set(designatorsFromText(`${s.subject} ${s.number}`));
+  const supNum = s.number;
+  const href = s.href;
+  const out: AreaRecord[] = [];
+  const seen = new Set<string>();
+  for (const a of [...candidates, ...areas]) {
+    const byId = ids.has(a.id.toUpperCase());
+    const byProv =
+      a.provenance.href === href ||
+      a.provenance.supNumber === supNum ||
+      (!!a.provenance.supNumber &&
+        href.includes(a.provenance.supNumber.replace("/", "-")));
+    if (!byId && !byProv) continue;
+    const fid = areaFeatureId(a);
+    if (seen.has(fid)) continue;
+    seen.add(fid);
+    out.push(a);
+  }
+  return out;
+}
+
+function hoverIncludes(hoverKey: HoverKey, fid: string): boolean {
+  if (hoverKey == null) return false;
+  return Array.isArray(hoverKey) ? hoverKey.includes(fid) : hoverKey === fid;
 }
 
 export function Workspace() {
@@ -69,7 +108,8 @@ export function Workspace() {
     DEFAULT_LAYER_VISIBILITY,
   );
   const [focusId, setFocusId] = useState<string | null>(null);
-  const [hoverKey, setHoverKey] = useState<string | null>(null);
+  const [fitAreaIds, setFitAreaIds] = useState<string[] | null>(null);
+  const [hoverKey, setHoverKey] = useState<HoverKey>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [supViewer, setSupViewer] = useState<SupViewer | null>(null);
@@ -193,26 +233,44 @@ export function Workspace() {
       if (!res.ok) throw new Error(data.error || "SUP catalogue failed");
       const list: SupCatalogueRow[] = data.areaSups?.length ? data.areaSups : data.sups;
       setSups(list);
-      // Auto-check all likely-area SUPs except those whose subject already says UAS/UAV.
-      // Newest first comes from the catalogue sort — do not slice to an arbitrary top-N
-      // (that used to skip recent military R/D like 185/2026 and 191/2026).
+      // Auto-check likely-area SUPs newest-first, but skip any with UAS/UAV/BVLOS
+      // in the subject *or* SUP body (e.g. 101/2026 — UAS only in the description).
+      const likelyRows = list.filter((x: SupCatalogueRow) => x.likelyArea);
+      const decisions = await Promise.all(
+        likelyRows.map(async (s) => {
+          if (mentionsUasActivity(s.subject)) {
+            return { href: s.href, auto: false as const };
+          }
+          try {
+            const probe = await fetch(
+              `/api/amdt/${encodeURIComponent(amdtId)}/sup/uas?path=${encodeURIComponent(s.href)}`,
+            );
+            const body = (await probe.json()) as { mentionsUas?: boolean };
+            if (probe.ok && body.mentionsUas) {
+              return { href: s.href, auto: false as const };
+            }
+          } catch {
+            // Network glitch — keep subject-clean SUPs eligible.
+          }
+          return { href: s.href, auto: true as const };
+        }),
+      );
       const sel: Record<string, boolean> = {};
       let auto = 0;
-      let skippedUasSubject = 0;
-      for (const s of list.filter((x: SupCatalogueRow) => x.likelyArea)) {
-        if (subjectLooksUas(s.subject)) {
-          skippedUasSubject += 1;
-          continue;
+      let skippedUas = 0;
+      for (const d of decisions) {
+        if (d.auto) {
+          sel[d.href] = true;
+          auto += 1;
+        } else {
+          skippedUas += 1;
         }
-        sel[s.href] = true;
-        auto += 1;
       }
       setSelectedSups(sel);
-      const likely = list.filter((s) => s.likelyArea).length;
       toast.success(
-        skippedUasSubject
-          ? `${likely} area SUPs · auto-selected ${auto} (skipped ${skippedUasSubject} UAS-titled)`
-          : `${likely} area SUPs · auto-selected ${auto}`,
+        skippedUas
+          ? `${likelyRows.length} area SUPs · auto-selected ${auto} (skipped ${skippedUas} with UAS/UAV/BVLOS)`
+          : `${likelyRows.length} area SUPs · auto-selected ${auto}`,
       );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Scan failed");
@@ -374,7 +432,11 @@ export function Workspace() {
               {sups.filter((s) => s.likelyArea).map((s) => (
                 <div
                   key={s.href}
-                  className="flex items-start gap-2 rounded-md border border-transparent px-1 py-1 hover:border-slate-200 hover:bg-white"
+                  className={`flex items-start gap-2 rounded-md border border-transparent px-1 py-1 hover:border-slate-200 hover:bg-white ${
+                    supViewer?.href === s.href
+                      ? "border-sky-200 bg-sky-50/80"
+                      : ""
+                  }`}
                 >
                   <Checkbox
                     className="mt-0.5"
@@ -384,21 +446,39 @@ export function Workspace() {
                     }
                     aria-label={`Select SUP ${s.number}`}
                   />
-                  <div
-                    className={`min-w-0 flex-1 rounded px-0.5 text-xs leading-snug hover:bg-sky-50 ${
-                      supViewer?.href === s.href
-                        ? "bg-sky-50 ring-1 ring-sky-300"
-                        : ""
-                    }`}
-                    title="Hover to preview SUP here — checkbox selects for parse"
-                    onMouseEnter={() =>
-                      showSupViewer(amdtId, s.href, `SUP ${s.number}`)
-                    }
-                  >
-                    <span className="font-medium text-sky-800 underline decoration-sky-300/80 underline-offset-2">
+                  <div className="min-w-0 flex-1 text-xs leading-snug">
+                    <button
+                      type="button"
+                      className="font-medium text-sky-800 underline decoration-sky-300/80 underline-offset-2 hover:bg-sky-50"
+                      title="Hover to open SUP preview"
+                      onMouseEnter={() =>
+                        showSupViewer(amdtId, s.href, `SUP ${s.number}`)
+                      }
+                    >
                       {s.number}
-                    </span>{" "}
-                    <span className="text-slate-600">{s.subject.slice(0, 90)}</span>
+                    </button>{" "}
+                    <span
+                      className="cursor-default text-slate-600 hover:bg-amber-50 hover:text-slate-800"
+                      title="Hover to highlight related area(s) on the map"
+                      onMouseEnter={() => {
+                        const related = areasForCatalogueSup(
+                          s,
+                          areas,
+                          candidates,
+                        );
+                        if (!related.length) {
+                          const ids = designatorsFromText(s.subject);
+                          setHoverKey(null);
+                          if (ids.length) setFitAreaIds(ids);
+                          return;
+                        }
+                        setHoverKey(related.map(areaFeatureId));
+                        setFitAreaIds(related.map((a) => a.id));
+                      }}
+                      onMouseLeave={() => setHoverKey(null)}
+                    >
+                      {s.subject.slice(0, 90)}
+                    </span>
                   </div>
                 </div>
               ))}
@@ -426,6 +506,7 @@ export function Workspace() {
             areas={areas}
             candidates={candidates}
             focusId={focusId}
+            fitAreaIds={fitAreaIds}
             hoverKey={hoverKey}
             selectedKey={selectedKey}
             onHoverKey={setHoverKey}
@@ -535,7 +616,7 @@ export function Workspace() {
             <ul className="divide-y divide-slate-100 text-sm">
               {visibleList.slice(0, 400).map((a) => {
                 const fid = areaFeatureId(a);
-                const hovered = hoverKey === fid;
+                const hovered = hoverIncludes(hoverKey, fid);
                 const selected = selectedKey === fid;
                 return (
                 <li key={fid}>
@@ -585,7 +666,7 @@ export function Workspace() {
             <ul className="divide-y divide-slate-100 text-sm">
               {diffs.map((d) => {
                 const fid = areaFeatureId(d.candidate);
-                const hovered = hoverKey === fid;
+                const hovered = hoverIncludes(hoverKey, fid);
                 const selected = selectedKey === fid;
                 const supHref =
                   d.candidate.provenance.href ||

@@ -66,13 +66,18 @@ export function shortFromDesignator(id: string): string {
   return u;
 }
 
-/** UAS-only → not for VATSIM. */
+/** Any UAS/UAV/BVLOS-style mention (subject or body) — skip auto-select. */
+export function mentionsUasActivity(text: string): boolean {
+  return /\bUAS\b|\bUAV\b|\bBVLOS\b|\bRPAS\b|\bDRONES?\b/i.test(text);
+}
+
+/** UAS-only → not for VATSIM (stricter than mentionsUasActivity). */
 export function isUasOnlyText(text: string): boolean {
   const t = text.toUpperCase();
   return (
     /\bONLY\s+UAS\b/.test(t) ||
     /\bUAS\s*\/\s*UAV\s+ONLY\b/.test(t) ||
-    /\bBVLOS\b/.test(t) && /\bUAS\b/.test(t) && !/\bMILITARY\s+AVIATION\b/.test(t) ||
+    (/\bBVLOS\b/.test(t) && /\bUAS\b/.test(t) && !/\bMILITARY\s+AVIATION\b/.test(t)) ||
     /\bEXCLUDED\.\s*ONLY\s+UAS\b/.test(t)
   );
 }

@@ -25,16 +25,25 @@ if (typeof window !== "undefined") {
   setWorkerUrl(`${window.location.origin}/maplibre-gl-worker.mjs`);
 }
 
+type HoverKey = string | string[] | null;
+
 type Props = {
   areas: AreaRecord[];
   candidates?: AreaRecord[];
   focusId?: string | null;
-  hoverKey?: string | null;
+  /** Designator ids (e.g. ESR791) — fit map to matching base/candidate polygons. */
+  fitAreaIds?: string[] | null;
+  hoverKey?: HoverKey;
   selectedKey?: string | null;
   onHoverKey?: (key: string | null) => void;
   onSelectKey?: (key: string | null) => void;
   layerVisibility: LayerVisibility;
 };
+
+function normalizeKeys(key: HoverKey | undefined): string[] {
+  if (key == null || key === "") return [];
+  return Array.isArray(key) ? key.filter(Boolean) : [key];
+}
 
 type Role = "base" | "candidate";
 
@@ -200,9 +209,15 @@ function setSourceData(
   return true;
 }
 
-function setHoverFilter(map: MapLibreMap, fid: string | null) {
+function setHoverFilter(map: MapLibreMap, keys: string[]) {
   // Expression filter; cast avoids MapLibre's overloaded FilterSpecification unions.
-  const filter = ["==", ["get", "fid"], fid ?? ""] as never;
+  const filter = (
+    keys.length === 0
+      ? ["==", ["get", "fid"], ""]
+      : keys.length === 1
+        ? ["==", ["get", "fid"], keys[0]]
+        : ["in", ["get", "fid"], ["literal", keys]]
+  ) as never;
   for (const id of [
     "areas-hover-fill",
     "areas-hover-line",
@@ -213,10 +228,25 @@ function setHoverFilter(map: MapLibreMap, fid: string | null) {
   }
 }
 
+function fitAreas(map: MapLibreMap, hits: AreaRecord[]) {
+  const withCoords = hits.filter((a) => a.coordinates.length >= 1);
+  if (!withCoords.length) return;
+  const lons = withCoords.flatMap((a) => a.coordinates.map((c) => c[0]));
+  const lats = withCoords.flatMap((a) => a.coordinates.map((c) => c[1]));
+  map.fitBounds(
+    [
+      [Math.min(...lons), Math.min(...lats)],
+      [Math.max(...lons), Math.max(...lats)],
+    ],
+    { padding: 60, maxZoom: 9, duration: 600 },
+  );
+}
+
 export function AreaMap({
   areas,
   candidates = [],
   focusId,
+  fitAreaIds = null,
   hoverKey = null,
   selectedKey = null,
   onHoverKey,
@@ -316,7 +346,8 @@ export function AreaMap({
     const map = mapRef.current;
     if (!map || !readyRef.current) return;
     // Prefer live hover; fall back to persistent selection.
-    setHoverFilter(map, hoverKey ?? selectedKey);
+    const keys = normalizeKeys(hoverKey);
+    setHoverFilter(map, keys.length ? keys : normalizeKeys(selectedKey));
   }, [hoverKey, selectedKey]);
 
   useEffect(() => {
@@ -326,17 +357,19 @@ export function AreaMap({
       visible.find((a) => a.id === focusId) ||
       candidates.find((a) => a.id === focusId);
     if (!hit || hit.coordinates.length < 1) return;
-    const lons = hit.coordinates.map((c) => c[0]);
-    const lats = hit.coordinates.map((c) => c[1]);
-    map.fitBounds(
-      [
-        [Math.min(...lons), Math.min(...lats)],
-        [Math.max(...lons), Math.max(...lats)],
-      ],
-      { padding: 60, maxZoom: 9, duration: 600 },
-    );
+    fitAreas(map, [hit]);
     onSelectRef.current?.(areaFeatureId(hit));
   }, [focusId, visible, candidates]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !fitAreaIds?.length) return;
+    const want = new Set(fitAreaIds.map((id) => id.toUpperCase()));
+    const hits = [...candidates, ...visible].filter((a) =>
+      want.has(a.id.toUpperCase()),
+    );
+    fitAreas(map, hits);
+  }, [fitAreaIds, visible, candidates]);
 
   return <div ref={ref} className="h-full w-full min-h-[420px]" />;
 }

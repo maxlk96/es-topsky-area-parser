@@ -1,10 +1,8 @@
+import { mentionsUasActivity } from "@/lib/areas/classify";
 import type { SupCatalogueRow } from "@/lib/areas/types";
 
 const AREA_SUBJECT =
   /temporary\s+(restricted|danger)\s+area|tillfälligt\s+(restriktions|farligt)\s*område|\bESR\d|\bESD\d/i;
-
-/** Subject-line hint only — real UAS-only exclusion happens when parsing the SUP body. */
-const UAS_SUBJECT = /\bUAS\b|\bUAV\b|\bBVLOS\b|\bRPAS\b/i;
 
 function clean(s: string): string {
   return s.replace(/\\n/g, " ").replace(/\\t/g, " ").replace(/\s+/g, " ").trim();
@@ -23,8 +21,9 @@ export function supNumberKey(number: string): [number, number] {
   return [b, a];
 }
 
+/** @deprecated Prefer mentionsUasActivity — kept for call sites/tests. */
 export function subjectLooksUas(subject: string): boolean {
-  return UAS_SUBJECT.test(subject);
+  return mentionsUasActivity(subject);
 }
 
 /** Parse SUP rows from LFV datasource.js object literals. */
