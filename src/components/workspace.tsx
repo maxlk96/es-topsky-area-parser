@@ -35,6 +35,7 @@ import {
   diffCandidates,
   diffSourceGroupKey,
   diffSourceGroupLabel,
+  filterActionableDiffs,
   mergeCandidateAreas,
   mergeDiffItems,
   sortDiffItems,
@@ -495,21 +496,19 @@ export function Workspace() {
         }
         found.push(...(data.areas as AreaRecord[]));
       }
-      const drawable = found.filter(
-        (a) =>
-          a.exclusionReason !== "fir_border" &&
-          a.exclusionReason !== "uas_only" &&
-          a.exclusionReason !== "ifr_planning_only" &&
-          a.exclusionReason !== "not_in_aip" &&
-          !isIfrPlanningOnlyArea(a) &&
-          !isNotInAipArea(a) &&
-          (a.coordinates.length >= 3 || a.boundCircle),
-      );
-      setCandidates((prev) => mergeCandidateAreas(prev, drawable));
       const items = sortDiffItems(diffCandidates(areas, found));
+      const actionable = filterActionableDiffs(items);
+      setCandidates((prev) =>
+        mergeCandidateAreas(
+          prev,
+          actionable
+            .map((d) => d.candidate)
+            .filter((a) => a.coordinates.length >= 3 || a.boundCircle),
+        ),
+      );
       setDiffs((prev) => mergeDiffItems(prev, items));
       toast.success(
-        `Parsed ${found.length} SUP areas → +${items.length} diff rows (accumulated)`,
+        `Parsed ${found.length} SUP areas → ${actionable.length} new/changed (accumulated)`,
       );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Parse failed");
@@ -556,7 +555,6 @@ export function Workspace() {
       const keys = catalogueSupKeySet(catRows);
       if (keys) setCatalogueSupKeys(keys);
       const stale = dropStaleTempoFromWorking(areas, keys ?? catalogueSupKeys);
-      setCandidates((prev) => mergeCandidateAreas(prev, drawable));
       const orphanItems = orphanRdDiffItems(
         findOrphanPermanentRd(stale.next, all),
       );
@@ -564,13 +562,21 @@ export function Workspace() {
         ...diffCandidates(stale.next, all),
         ...orphanItems,
       ]);
+      const actionable = filterActionableDiffs(items);
+      setCandidates((prev) =>
+        mergeCandidateAreas(
+          prev,
+          actionable.map((d) => d.candidate).filter(
+            (a) => a.coordinates.length >= 3 || a.boundCircle,
+          ),
+        ),
+      );
       setDiffs((prev) => mergeDiffItems(prev, items));
-      const nChanged = items.filter((i) => i.status === "changed").length;
-      const nNew = items.filter((i) => i.status === "new").length;
-      const nEx = items.filter((i) => i.status === "excluded").length;
-      const nRemoved = items.filter((i) => i.status === "removed").length;
+      const nChanged = actionable.filter((i) => i.status === "changed").length;
+      const nNew = actionable.filter((i) => i.status === "new").length;
+      const nRemoved = actionable.filter((i) => i.status === "removed").length;
       toast.success(
-        `AIP reload: ${nChanged} changed · ${nNew} new · ${nRemoved} remove · ${nEx} excluded` +
+        `AIP reload: ${nChanged} changed · ${nNew} new · ${nRemoved} remove` +
           ` (ENR ${data.enr51Count} · SUPs ${data.supParsed})` +
           (data.skippedUasSubject
             ? ` · skipped ${data.skippedUasSubject} UAS subject`
@@ -611,12 +617,20 @@ export function Workspace() {
       // Turn PCA layers on so the overlay is visible after reload.
       setLayerVisibility((v) => ({ ...v, PCA: true, PCA_SUB: true }));
       const items = sortDiffItems(diffCandidates(areas, all));
+      const actionable = filterActionableDiffs(items);
+      setCandidates((prev) =>
+        mergeCandidateAreas(
+          prev,
+          actionable
+            .map((d) => d.candidate)
+            .filter((a) => a.coordinates.length >= 3),
+        ),
+      );
       setDiffs((prev) => mergeDiffItems(prev, items));
-      const nChanged = items.filter((i) => i.status === "changed").length;
-      const nNew = items.filter((i) => i.status === "new").length;
-      const nPresent = items.filter((i) => i.status === "present").length;
+      const nChanged = actionable.filter((i) => i.status === "changed").length;
+      const nNew = actionable.filter((i) => i.status === "new").length;
       toast.success(
-        `PCA echarts: ${nChanged} changed · ${nNew} new · ${nPresent} present` +
+        `PCA echarts: ${nChanged} changed · ${nNew} new` +
           ` (${data.mainCount} main · ${data.subCount} sub) · accumulated`,
       );
     } catch (e) {
@@ -1046,6 +1060,12 @@ export function Workspace() {
     for (const a of areas) if (a.section === "tempo") tempo++;
     return { ...byLayer, tempo };
   }, [areas]);
+
+  /** Verify panel: only new / changed / removed (never present / excluded noise). */
+  const verifyDiffs = useMemo(
+    () => filterActionableDiffs(diffs),
+    [diffs],
+  );
 
   return (
     <div className="flex h-dvh flex-col bg-[radial-gradient(1200px_600px_at_10%_-10%,#dbeafe_0%,transparent_55%),radial-gradient(900px_500px_at_90%_0%,#fee2e2_0%,transparent_50%),#f8fafc] text-slate-900">
@@ -1780,7 +1800,7 @@ export function Workspace() {
                   size="sm"
                   variant="ghost"
                   className="h-7 px-2 text-xs"
-                  disabled={!diffs.length && !candidates.length}
+                  disabled={!verifyDiffs.length && !candidates.length}
                   onClick={clearVerifyDiff}
                   title="Clear accumulated verify/diff (baseline reload also clears)"
                 >
@@ -1791,14 +1811,7 @@ export function Workspace() {
                   size="sm"
                   variant="secondary"
                   className="h-7 px-2 text-xs"
-                  disabled={
-                    !diffs.some(
-                      (d) =>
-                        d.status === "new" ||
-                        d.status === "changed" ||
-                        d.status === "removed",
-                    )
-                  }
+                  disabled={!verifyDiffs.length}
                   onClick={acceptAllDiffs}
                   title="Accept all new, changed, and remove candidates"
                 >
@@ -1806,35 +1819,26 @@ export function Workspace() {
                 </Button>
               </div>
             </div>
-            {diffs.length > 0 && (
+            {verifyDiffs.length > 0 && (
               <p className="text-[11px] text-slate-500">
-                {(
-                  [
-                    "changed",
-                    "new",
-                    "removed",
-                    "excluded",
-                    "present",
-                    "expired",
-                  ] as const
-                )
+                {(["changed", "new", "removed"] as const)
                   .map((s) => {
-                    const n = diffs.filter((d) => d.status === s).length;
+                    const n = verifyDiffs.filter((d) => d.status === s).length;
                     return n ? `${n} ${s}` : null;
                   })
                   .filter(Boolean)
                   .join(" · ")}
-                {" · accumulates across AIP / SUP / PCA"}
+                {" · real differences only"}
               </p>
             )}
           </div>
           <ScrollArea className="min-h-0 min-w-0 flex-1 overflow-x-hidden rounded-md border border-slate-200 bg-white">
             <ul className="divide-y divide-slate-100 text-sm">
-              {diffs.map((d, idx) => {
+              {verifyDiffs.map((d, idx) => {
                 const fid = areaFeatureId(d.candidate);
                 const groupKey = diffSourceGroupKey(d);
                 const prevGroup =
-                  idx > 0 ? diffSourceGroupKey(diffs[idx - 1]!) : null;
+                  idx > 0 ? diffSourceGroupKey(verifyDiffs[idx - 1]!) : null;
                 const showGroupHeader = groupKey !== prevGroup;
                 const hovered = hoverIncludes(hoverKey, fid);
                 const selected = selectedKey === fid;
@@ -1971,10 +1975,10 @@ export function Workspace() {
                 </li>
                 );
               })}
-              {!diffs.length && (
+              {!verifyDiffs.length && (
                 <li className="px-2 py-3 text-xs text-slate-500">
-                  AIP → diff, Parse SUPs, and PCA reparse accumulate here. Clear or
-                  reload baseline to reset.
+                  Only new / changed / removed areas appear here. Unchanged matches
+                  are omitted. Clear or reload baseline to reset.
                 </li>
               )}
             </ul>

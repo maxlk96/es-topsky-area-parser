@@ -64,9 +64,115 @@ function circlesMatch(
   return centerNm <= COORD_TOLERANCE_NM && radiusDiff <= 0.03;
 }
 
+function ringCentroid(ring: [number, number][]): [number, number] | null {
+  if (!ring.length) return null;
+  let lon = 0;
+  let lat = 0;
+  for (const [x, y] of ring) {
+    lon += x;
+    lat += y;
+  }
+  return [lon / ring.length, lat / ring.length];
+}
+
+function maxRadiusNm(
+  ring: [number, number][],
+  center: [number, number],
+): number {
+  let max = 0;
+  for (const p of ring) max = Math.max(max, haversineNm(center, p));
+  return max;
+}
+
+/** Approx distance from point to segment AB (NM), local equirectangular. */
+function distPointToSegNm(
+  p: [number, number],
+  a: [number, number],
+  b: [number, number],
+): number {
+  const lat0 = ((a[1] + b[1] + p[1]) / 3) * (Math.PI / 180);
+  const kx = 60 * Math.cos(lat0); // NM per deg lon
+  const ky = 60; // NM per deg lat
+  const ax = a[0] * kx;
+  const ay = a[1] * ky;
+  const bx = b[0] * kx;
+  const by = b[1] * ky;
+  const px = p[0] * kx;
+  const py = p[1] * ky;
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  let t = len2 < 1e-12 ? 0 : ((px - ax) * dx + (py - ay) * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  const qx = ax + t * dx;
+  const qy = ay + t * dy;
+  return Math.hypot(px - qx, py - qy);
+}
+
+function maxDistToRingNm(
+  points: [number, number][],
+  ring: [number, number][],
+): number {
+  if (!ring.length) return Infinity;
+  let max = 0;
+  for (const p of points) {
+    let min = Infinity;
+    for (let i = 0; i < ring.length; i++) {
+      const a = ring[i]!;
+      const b = ring[(i + 1) % ring.length]!;
+      min = Math.min(min, distPointToSegNm(p, a, b));
+    }
+    max = Math.max(max, min);
+  }
+  return max;
+}
+
+/**
+ * True when rings represent the same shape within tolerance — including
+ * AIP vs TopSky densification (different vertex counts).
+ */
+function ringsEquivalent(
+  a: [number, number][],
+  b: [number, number][],
+): boolean {
+  const ringA = openRing(a);
+  const ringB = openRing(b);
+  if (!ringA.length && !ringB.length) return true;
+  if (!ringA.length || !ringB.length) return false;
+
+  if (ringA.length === ringB.length) {
+    let maxNm = 0;
+    for (let i = 0; i < ringA.length; i++) {
+      maxNm = Math.max(maxNm, haversineNm(ringA[i]!, ringB[i]!));
+    }
+    if (maxNm <= COORD_TOLERANCE_NM) return true;
+  }
+
+  const cA = ringCentroid(ringA);
+  const cB = ringCentroid(ringB);
+  if (!cA || !cB) return false;
+  if (haversineNm(cA, cB) > 0.2) return false;
+  const rA = maxRadiusNm(ringA, cA);
+  const rB = maxRadiusNm(ringB, cB);
+  if (Math.abs(rA - rB) > 0.15) return false;
+  // Each vertex must lie on (near) an edge of the other ring.
+  const h = Math.max(
+    maxDistToRingNm(ringA, ringB),
+    maxDistToRingNm(ringB, ringA),
+  );
+  return h <= 0.08;
+}
+
+function activationKey(area: AreaRecord): string {
+  const t = area.activation?.type || "NONE";
+  const key = area.activation?.key || "";
+  return `${t}:${key}`;
+}
+
 /**
  * Compare existing TopSky vs AIP candidate. Returns human-readable change reasons.
- * Close-ring duplicates and sub-tolerance vertex noise are ignored.
+ * Close-ring duplicates, densification-only vertex churn, and sub-tolerance
+ * noise are ignored (no-op → empty → not listed in Verify/Diff).
  */
 export function explainAreaChanges(
   existing: AreaRecord,
@@ -77,6 +183,20 @@ export function explainAreaChanges(
   if (!!existing.noaiw !== !!candidate.noaiw) {
     reasons.push(
       candidate.noaiw ? "NOAIW added" : "NOAIW removed",
+    );
+  }
+
+  const typeEx = (existing.areaTypeCode || "").trim();
+  const typeCand = (candidate.areaTypeCode || "").trim();
+  if (typeEx && typeCand && typeEx !== typeCand) {
+    reasons.push(`AREA:${typeEx} → AREA:${typeCand}`);
+  }
+
+  const actEx = activationKey(existing);
+  const actCand = activationKey(candidate);
+  if (actEx !== actCand) {
+    reasons.push(
+      `ACTIVE ${activationLabel(existing)} → ${activationLabel(candidate)}`,
     );
   }
 
@@ -91,6 +211,9 @@ export function explainAreaChanges(
   if (nameEx && nameCand && nameEx !== nameCand) {
     reasons.push(`Name ${existing.name} → ${candidate.name}`);
   }
+
+  // LABEL coords are not compared: Accept keeps baseline LABEL; ENR/PCA
+  // candidates often invent a centroid that would flood false "changed" rows.
 
   const circleEq = circlesMatch(existing.boundCircle, candidate.boundCircle);
   if (circleEq === true) {
@@ -109,6 +232,10 @@ export function explainAreaChanges(
     return reasons;
   }
 
+  if (ringsEquivalent(existing.coordinates, candidate.coordinates)) {
+    return reasons;
+  }
+
   const ringA = openRing(existing.coordinates);
   const ringB = openRing(candidate.coordinates);
   if (ringA.length !== ringB.length) {
@@ -119,7 +246,7 @@ export function explainAreaChanges(
 
   let maxNm = 0;
   for (let i = 0; i < ringA.length; i++) {
-    maxNm = Math.max(maxNm, haversineNm(ringA[i], ringB[i]));
+    maxNm = Math.max(maxNm, haversineNm(ringA[i]!, ringB[i]!));
   }
   if (maxNm > COORD_TOLERANCE_NM) {
     if (maxNm < 1) {
@@ -244,10 +371,21 @@ export function mergeDiffItems(
 ): DiffItem[] {
   const byId = new Map<string, DiffItem>();
   for (const d of previous) {
+    // Never keep stale present/excluded noise in the verify panel.
+    if (!isActionableDiffStatus(d.status) && d.status !== "excluded") {
+      continue;
+    }
+    // Keep excluded only for UAS stub export bookkeeping — not for display.
     byId.set(normalizeDesignator(d.candidate.id), d);
   }
   for (const d of incoming) {
-    byId.set(normalizeDesignator(d.candidate.id), d);
+    const id = normalizeDesignator(d.candidate.id);
+    if (d.status === "present") {
+      // Explicit match: drop any prior row for this designator.
+      byId.delete(id);
+      continue;
+    }
+    byId.set(id, d);
   }
   return sortDiffItems([...byId.values()]);
 }
@@ -388,21 +526,36 @@ export function diffCandidates(
     }
 
     const changeReasons = explainAreaChanges(ex, normalized);
-    if (changeReasons.length === 0) {
-      items.push({
-        status: "present",
-        candidate: normalized,
-        existing: ex,
-        notes: notes.length ? notes : ["Match within tolerance"],
-      });
-    } else {
-      items.push({
-        status: "changed",
-        candidate: normalized,
-        existing: ex,
-        notes: [...notes, ...changeReasons],
-      });
-    }
+    // Unchanged vs baseline → omit entirely (Verify/Diff = real diffs only).
+    if (changeReasons.length === 0) continue;
+    items.push({
+      status: "changed",
+      candidate: normalized,
+      existing: ex,
+      notes: [...notes, ...changeReasons],
+    });
   }
   return items;
+}
+
+/** Statuses that belong in the Verify/Diff panel. */
+export const ACTIONABLE_DIFF_STATUSES = [
+  "new",
+  "changed",
+  "removed",
+] as const;
+
+export type ActionableDiffStatus = (typeof ACTIONABLE_DIFF_STATUSES)[number];
+
+export function isActionableDiffStatus(
+  status: DiffItem["status"],
+): status is ActionableDiffStatus {
+  return (
+    status === "new" || status === "changed" || status === "removed"
+  );
+}
+
+/** Drop present / excluded / expired noise from accumulated verify rows. */
+export function filterActionableDiffs(items: DiffItem[]): DiffItem[] {
+  return items.filter((d) => isActionableDiffStatus(d.status));
 }

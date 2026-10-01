@@ -108,7 +108,7 @@ describe("explainAreaChanges", () => {
 });
 
 describe("diffCandidates reasons", () => {
-  it("puts change reasons on changed rows and marks close-ring as present", () => {
+  it("omits unchanged close-ring matches; keeps real LIMITS changes", () => {
     const existing = [
       stub({
         id: "ESR12",
@@ -140,14 +140,57 @@ describe("diffCandidates reasons", () => {
       }),
     ];
     const items = diffCandidates(existing, candidates);
-    const r12 = items.find((i) => i.candidate.id === "ESR12")!;
+    expect(items.find((i) => i.candidate.id === "ESR12")).toBeUndefined();
     const r13 = items.find((i) => i.candidate.id === "ESR13")!;
-    expect(r12.status).toBe("present");
     expect(r13.status).toBe("changed");
     expect(r13.notes.some((n) => n.includes("LIMITS 0:335 → 0:355"))).toBe(true);
   });
 
+  it("omits densification-only vertex churn as unchanged", () => {
+    const base: [number, number][] = [
+      [15.0, 59.48],
+      [15.01, 59.45],
+      [14.9, 59.4],
+      [14.85, 59.42],
+      [15.0, 59.48],
+    ];
+    // Insert edge midpoints — same polygon, denser ring (AIP arc expand).
+    const densified: [number, number][] = [];
+    for (let i = 0; i < base.length - 1; i++) {
+      const [lon1, lat1] = base[i]!;
+      const [lon2, lat2] = base[i + 1]!;
+      densified.push([lon1, lat1]);
+      densified.push([(lon1 + lon2) / 2, (lat1 + lat2) / 2]);
+    }
+    densified.push(base[base.length - 1]!);
+    const existing = [
+      stub({
+        id: "ESR18",
+        shortName: "R18",
+        name: "BOFORS, VILLINGSBERG",
+        coordinates: base,
+      }),
+    ];
+    const candidates = [
+      stub({
+        id: "ESR18",
+        shortName: "R18",
+        name: "BOFORS, VILLINGSBERG",
+        coordinates: densified,
+        provenance: { source: "enr51" },
+      }),
+    ];
+    expect(diffCandidates(existing, candidates)).toEqual([]);
+  });
+
   it("labels ENR 5.1 + AUP without saying permanent (ESD171)", () => {
+    const ring: [number, number][] = [
+      [18.3, 62.6],
+      [18.4, 62.6],
+      [18.4, 62.5],
+      [18.3, 62.5],
+      [18.3, 62.6],
+    ];
     const existing = [
       stub({
         id: "ESD171",
@@ -155,19 +198,28 @@ describe("diffCandidates reasons", () => {
         name: "HÄRNÖN EAST",
         category: "D",
         activation: { type: "AUP", key: "ESD171" },
+        coordinates: ring,
+        noaiw: true,
+        directives: ["NOAIW"],
       }),
     ];
     const candidates = [
       stub({
         id: "ESD171",
         shortName: "D171",
-        name: "HÄRNON EAST",
+        name: "HÄRNÖN EAST",
         category: "D",
         activation: { type: "AUP", key: "ESD171" },
+        coordinates: ring,
+        noaiw: true,
+        directives: ["NOAIW"],
         provenance: { source: "enr51" },
+        // Real change so the row is emitted (unchanged rows are omitted).
+        limits: [0, 405],
       }),
     ];
     const item = diffCandidates(existing, candidates)[0]!;
+    expect(item.status).toBe("changed");
     expect(item.notes).toContain("ENR 5.1");
     expect(item.notes).toContain("AUP activation");
     expect(item.notes.some((n) => /permanent/i.test(n))).toBe(false);
@@ -241,23 +293,21 @@ describe("mergeDiffItems / mergeCandidateAreas", () => {
         notes: ["vatiris echarts PCA"],
       },
       {
+        // Unchanged on re-diff → drop prior ESR3 changed row.
         status: "present",
         candidate: stub({
           id: "ESR3",
           provenance: { source: "enr51" },
         }),
-        notes: ["ENR 5.1", "updated"],
+        notes: ["ENR 5.1"],
       },
     ];
     const merged = mergeDiffItems(prev, incoming);
     expect(merged.map((d) => d.candidate.id).sort()).toEqual([
       "A1",
-      "ESR3",
       "ESR791",
     ]);
-    expect(merged.find((d) => d.candidate.id === "ESR3")!.notes).toContain(
-      "updated",
-    );
+    expect(merged.find((d) => d.candidate.id === "ESR3")).toBeUndefined();
     expect(merged.find((d) => d.candidate.id === "ESR791")).toBeTruthy();
   });
 
