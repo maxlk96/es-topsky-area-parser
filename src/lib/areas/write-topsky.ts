@@ -105,16 +105,21 @@ function findAreaBlock(
     start = m.index;
   }
   const rest = text.slice(start);
-  // Stop at next area designator (//ESR… or PCA //A1) OR tempo section markers.
+  // Stop at next area designator (//ESR… or PCA //A1), section //// rules, or
+  // named section titles. Never swallow TEMPO / DANGER / PCA / SOARING banners.
   const ends = [
     rest.search(/\n\/\/ES[A-Z0-9]/i),
     rest.search(/\n\/\/[A-Z]+\d+[A-Z]?\b/i), // PCA //A1 / //A11
+    rest.search(/\n\/{10,}/), // ////… section rule
     rest.search(/\n\/\/\s*START OF TEMPO/i),
     rest.search(/\n\/\/\s*END OF TEMPO/i),
+    rest.search(/\n\/\/\s+MILITARY EXERCISE\b/i),
+    rest.search(/\n\/\/\s+SOARING SECTORS\b/i),
+    rest.search(/\n\/\/\s+DANGER AREAS\b/i),
   ].filter((n) => n >= 0);
   const endRel = ends.length ? Math.min(...ends) : -1;
-  const block = endRel >= 0 ? rest.slice(0, endRel) : rest;
-  return { start, block };
+  const raw = endRel >= 0 ? rest.slice(0, endRel) : rest;
+  return { start, block: stripTrailingSectionBannerLines(raw) };
 }
 
 function patchBlockInFile(
@@ -508,7 +513,9 @@ export function formatTempoAreaBlocks(areas: AreaRecord[]): string {
     }
     for (const a of group) {
       if (!needsFullBlockRewrite(a) && a.rawBlock) {
-        let block = stripTempoGroupHeaders(a.rawBlock);
+        let block = stripTrailingSectionBannerLines(
+          stripTempoGroupHeaders(a.rawBlock),
+        );
         if (a.nameEdited) {
           block = patchNameInBlock(block, a.id, a.name, a.label);
         } else if (a.labelEdited && a.label) {
@@ -636,7 +643,8 @@ export const TEMPO_END_BANNER = `///////////////////////////////////////////////
 
 /**
  * True for lines that form ESAA section banners (//// rules, blank `//`,
- * indented titles like `//      START OF TEMPO…`). Not area/SUP body comments.
+ * indented titles like `//      START OF TEMPO…` / SOARING / DANGER / PCA).
+ * Not area/SUP body comments.
  */
 export function isSectionBannerLine(line: string): boolean {
   const t = line.replace(/\s+$/g, "");
@@ -653,8 +661,19 @@ export function isSectionBannerLine(line: string): boolean {
     /^\/\/\s*$/.test(t) ||
     /^\/\/\s{2,}\S/.test(t) ||
     /^\/\/\s+(START|END)\s+OF\b/i.test(t) ||
-    /^\/\/\s+MILITARY EXERCISE\b/i.test(t)
+    /^\/\/\s+MILITARY EXERCISE\b/i.test(t) ||
+    /^\/\/\s+SOARING SECTORS\b/i.test(t) ||
+    /^\/\/\s+DANGER AREAS\b/i.test(t)
   );
+}
+
+/** Drop trailing //// / // banner crumbs that were swallowed into an area block. */
+export function stripTrailingSectionBannerLines(block: string): string {
+  const lines = block.replace(/\r\n/g, "\n").split("\n");
+  let end = lines.length;
+  while (end > 0 && isSectionBannerLine(lines[end - 1]!)) end -= 1;
+  if (end === lines.length) return block.replace(/\r\n/g, "\n");
+  return lines.slice(0, end).join("\n");
 }
 
 /**

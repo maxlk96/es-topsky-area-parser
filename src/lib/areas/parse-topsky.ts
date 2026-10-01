@@ -9,7 +9,11 @@ import {
   isDesignatorOnlyName,
   resolveAreaName,
 } from "./names";
-import { patchNameInBlock } from "./write-topsky";
+import {
+  isSectionBannerLine,
+  patchNameInBlock,
+  stripTrailingSectionBannerLines,
+} from "./write-topsky";
 import type { AreaRecord, ParseResult } from "./types";
 
 function bytesToLatin1(bytes: Uint8Array): string {
@@ -100,7 +104,8 @@ export function parseTopSkyText(text: string, encoding = "latin1"): ParseResult 
         : undefined;
 
     const end = cur.start + cur.lines.length;
-    let rawBlock = cur.lines.join("\n");
+    // Never keep TEMPO/DANGER/PCA/SOARING banner crumbs in the area block.
+    let rawBlock = stripTrailingSectionBannerLines(cur.lines.join("\n"));
     // Fix corrupt LABEL text in-block (e.g. NYN<\xe4SHAMN) so export writes clean name.
     if (resolved.fixedCorruption && label) {
       rawBlock = patchNameInBlock(rawBlock, id, resolved.name, label);
@@ -182,6 +187,13 @@ export function parseTopSkyText(text: string, encoding = "latin1"): ParseResult 
     if (line.includes("END OF TEMPO R AND D AREAS")) {
       flush();
       inTempo = false;
+    }
+
+    // Section banners (////… TEMPO / DANGER / PCA / SOARING) stay in the file
+    // only — never append opening //// + // crumbs onto the previous area.
+    if (isSectionBannerLine(line)) {
+      flush();
+      continue;
     }
 
     const trimmedLine = line.trim();

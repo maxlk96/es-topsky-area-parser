@@ -8,6 +8,7 @@ import {
   formatExcludedSupStub,
   formatLabelLine,
   formatSupNumberShort,
+  isSectionBannerLine,
   formatSupValidityLine,
   formatTempoAreaBlocks,
   mergeTempoSection,
@@ -461,6 +462,135 @@ ${TEMPO_END_BANNER}
     const end = findSectionBannerSpan(file, "END OF TEMPO R AND D AREAS")!;
     expect(file.slice(start.start, start.end).trim()).toBe(TEMPO_START_BANNER);
     expect(file.slice(end.start, end.end).trim()).toBe(TEMPO_END_BANNER);
+  });
+
+  it("does not emit orphan //// + // stubs; preserves full SOARING SECTORS banner", () => {
+    const soaring = `/////////////////////////////////////////////////////////////////////
+//
+//      SOARING SECTORS
+//
+//      Naming syntax: FSxxyyy
+//      FS=flygsport
+//      xx=ICAO (ESSD=SD)
+//      yyy=name shortening (Horn=HOR)
+//
+//      https://flygsport.se/grenar/segelflyg/segelflyget/verksamhet/luftrum
+//
+//      2025-rev3
+//
+/////////////////////////////////////////////////////////////////////`;
+    const file = `${TEMPO_START_BANNER}
+
+// 144/26 - Valid to 10 SEP 27
+//ESR728 BONA
+AREA:4F:  R728
+NOAIW
+ACTIVE:AUP:ESR728
+LABEL:N058.39.05.197:E015.06.07.799:BONA
+LIMITS:16:100
+N058.44.48.000 E014.58.58.000
+N058.40.28.000 E015.14.39.000
+N058.44.48.000 E014.58.58.000
+
+${TEMPO_END_BANNER}
+
+//A99 LAST PCA
+AREA:T: A99
+NOAIW
+LABEL:N060.00.00.000:E018.00.00.000:A99
+LIMITS:0:999
+N060.01.00.000 E018.01.00.000
+N060.02.00.000 E018.01.00.000
+N060.01.00.000 E018.01.00.000
+
+${soaring}
+
+//ESSD EAGLE
+AREA:2F:FSSDEAG
+NOSAP
+NOAIW
+LABEL:N060.04.38.110:E015.31.01.735:EAGLE
+LIMITS:45:90
+N060.11.13.000 E015.23.53.000
+N060.07.30.000 E015.52.54.000
+N060.11.13.000 E015.23.53.000
+`;
+    // Simulate legacy rawBlock that swallowed END-banner opening crumbs.
+    const tempo728: AreaRecord = {
+      id: "ESR728",
+      shortName: "R728",
+      name: "BONA",
+      category: "R",
+      areaTypeCode: "4F",
+      coordinates: [
+        [14.98, 58.74],
+        [15.24, 58.67],
+        [14.98, 58.74],
+      ],
+      limits: [16, 100],
+      activation: { type: "AUP", key: "ESR728" },
+      directives: ["NOAIW"],
+      label: { lat: 58.65, lon: 15.1, text: "BONA" },
+      mapDefaultVisible: true,
+      noaiw: true,
+      provenance: { source: "topsky", supNumber: "144/26", validTo: "10 SEP 27" },
+      rawBlock: `// 144/26 - Valid to 10 SEP 27
+//ESR728 BONA
+AREA:4F:  R728
+NOAIW
+ACTIVE:AUP:ESR728
+LABEL:N058.39.05.197:E015.06.07.799:BONA
+LIMITS:16:100
+N058.44.48.000 E014.58.58.000
+N058.40.28.000 E015.14.39.000
+N058.44.48.000 E014.58.58.000
+/////////////////////////////////////////////////////////////////////
+//
+`,
+      section: "tempo",
+    };
+    const pca: AreaRecord = {
+      id: "ESA99",
+      shortName: "A99",
+      name: "A99",
+      category: "PCA",
+      areaTypeCode: "T",
+      coordinates: [
+        [18.01, 60.01],
+        [18.01, 60.02],
+        [18.01, 60.01],
+      ],
+      limits: [0, 999],
+      activation: { type: "NONE" },
+      directives: ["NOAIW"],
+      label: { lat: 60, lon: 18, text: "A99" },
+      mapDefaultVisible: true,
+      noaiw: true,
+      provenance: { source: "vatiris_pca" },
+      rawBlock: "",
+      section: "other",
+    };
+    expect(isSectionBannerLine("//      SOARING SECTORS")).toBe(true);
+    const out = applyAcceptedAreaBlocks(
+      mergeTempoSection(file, [tempo728], {
+        now: new Date("2026-06-01T12:00:00Z"),
+      }),
+      [pca],
+    );
+    // Full END banner once — not a lone //// + // stub before the next area.
+    expect(out.match(/\/{20,}/g)?.length).toBeGreaterThanOrEqual(4);
+    expect(out).not.toMatch(
+      /\/{20,}\n\/\/\n\n\/\/ESR728/i,
+    );
+    expect(out).toContain(TEMPO_END_BANNER);
+    // Full SOARING banner preserved even when last PCA is rewritten.
+    expect(out).toContain("//      SOARING SECTORS");
+    expect(out).toContain("//      Naming syntax: FSxxyyy");
+    expect(out).toContain("//      2025-rev3");
+    expect(out).toContain("https://flygsport.se/grenar/segelflyg");
+    const soar = findSectionBannerSpan(out, "SOARING SECTORS")!;
+    expect(soar).toBeTruthy();
+    expect(out.slice(soar.start, soar.end).trim()).toBe(soaring);
   });
 
   it("mergeTempoSection preserves full START/END banners and orders EXCLUDED by SUP number", () => {

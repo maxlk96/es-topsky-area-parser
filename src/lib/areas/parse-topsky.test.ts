@@ -118,4 +118,59 @@ describe("parseTopSkyText", () => {
     expect(r117.rawBlock).toMatch(/LABEL:[^:\n]+:[^:\n]+:NYNÄSHAMN/);
     expect(r117.rawBlock).not.toMatch(/NYN</);
   });
+
+  it("does not swallow TEMPO / SOARING banner lines into area rawBlock", () => {
+    const text = `/////////////////////////////////////////////////////////////////////
+//
+//      START OF TEMPO R AND D AREAS
+//
+/////////////////////////////////////////////////////////////////////
+
+// 144/26 - Valid to 10 SEP 27
+//ESR728 BONA
+AREA:4F:  R728
+NOAIW
+ACTIVE:AUP:ESR728
+LIMITS:16:100
+N058.44.48.000 E014.58.58.000
+N058.40.28.000 E015.14.39.000
+N058.44.48.000 E014.58.58.000
+
+/////////////////////////////////////////////////////////////////////
+//
+//      END OF TEMPO R AND D AREAS
+//
+/////////////////////////////////////////////////////////////////////
+
+//A1
+AREA:T: A1
+NOAIW
+LIMITS:0:999
+N060.01.00.000 E018.01.00.000
+N060.02.00.000 E018.01.00.000
+N060.01.00.000 E018.01.00.000
+
+/////////////////////////////////////////////////////////////////////
+//
+//      SOARING SECTORS
+//
+//      Naming syntax: FSxxyyy
+//
+/////////////////////////////////////////////////////////////////////
+
+//ESSD EAGLE
+AREA:2F:FSSDEAG
+LIMITS:45:90
+N060.11.13.000 E015.23.53.000
+N060.07.30.000 E015.52.54.000
+N060.11.13.000 E015.23.53.000
+`;
+    const { areas } = parseTopSkyText(text);
+    const r728 = areas.find((a) => a.id === "ESR728")!;
+    const a1 = areas.find((a) => a.shortName.trim() === "A1")!;
+    expect(r728.rawBlock).not.toMatch(/\/{10,}/);
+    expect(r728.rawBlock).not.toMatch(/END OF TEMPO/);
+    expect(a1.rawBlock).not.toMatch(/SOARING SECTORS/);
+    expect(a1.rawBlock).not.toMatch(/\/{10,}/);
+  });
 });
