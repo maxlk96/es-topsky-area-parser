@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { areasEquivalent, diffCandidates, explainAreaChanges } from "./diff";
-import type { AreaRecord } from "./types";
+import {
+  areasEquivalent,
+  diffCandidates,
+  explainAreaChanges,
+  mergeCandidateAreas,
+  mergeDiffItems,
+  sortDiffItems,
+} from "./diff";
+import type { AreaRecord, DiffItem } from "./types";
 
 function stub(over: Partial<AreaRecord> = {}): AreaRecord {
   return {
@@ -198,5 +205,109 @@ describe("diffCandidates reasons", () => {
     const item = diffCandidates(existing, candidates)[0]!;
     expect(item.status).toBe("changed");
     expect(item.notes).toContain("NOAIW added");
+  });
+});
+
+describe("mergeDiffItems / mergeCandidateAreas", () => {
+  it("accumulates by id — newer batch replaces same designator, keeps others", () => {
+    const prev: DiffItem[] = [
+      {
+        status: "changed",
+        candidate: stub({
+          id: "ESR3",
+          provenance: { source: "enr51" },
+        }),
+        notes: ["ENR 5.1"],
+      },
+      {
+        status: "new",
+        candidate: stub({
+          id: "ESR791",
+          provenance: { source: "sup", supNumber: "185/2026" },
+        }),
+        notes: ["SUP 185/2026"],
+      },
+    ];
+    const incoming: DiffItem[] = [
+      {
+        status: "changed",
+        candidate: stub({
+          id: "A1",
+          shortName: "A1",
+          category: "PCA",
+          areaTypeCode: "T",
+          provenance: { source: "vatiris_pca" },
+        }),
+        notes: ["vatiris echarts PCA"],
+      },
+      {
+        status: "present",
+        candidate: stub({
+          id: "ESR3",
+          provenance: { source: "enr51" },
+        }),
+        notes: ["ENR 5.1", "updated"],
+      },
+    ];
+    const merged = mergeDiffItems(prev, incoming);
+    expect(merged.map((d) => d.candidate.id).sort()).toEqual([
+      "A1",
+      "ESR3",
+      "ESR791",
+    ]);
+    expect(merged.find((d) => d.candidate.id === "ESR3")!.notes).toContain(
+      "updated",
+    );
+    expect(merged.find((d) => d.candidate.id === "ESR791")).toBeTruthy();
+  });
+
+  it("sorts stacked groups ENR → SUP → PCA", () => {
+    const items = sortDiffItems([
+      {
+        status: "changed",
+        candidate: stub({
+          id: "A1",
+          provenance: { source: "vatiris_pca" },
+        }),
+        notes: [],
+      },
+      {
+        status: "new",
+        candidate: stub({
+          id: "ESR791",
+          provenance: { source: "sup" },
+        }),
+        notes: [],
+      },
+      {
+        status: "changed",
+        candidate: stub({
+          id: "ESR3",
+          provenance: { source: "enr51" },
+        }),
+        notes: [],
+      },
+    ]);
+    expect(items.map((d) => d.candidate.id)).toEqual([
+      "ESR3",
+      "ESR791",
+      "A1",
+    ]);
+  });
+
+  it("merges drawable candidates by id", () => {
+    const a = stub({ id: "ESR3", provenance: { source: "enr51" } });
+    const b = stub({
+      id: "A1",
+      provenance: { source: "vatiris_pca" },
+    });
+    const a2 = stub({
+      id: "ESR3",
+      name: "KALIX",
+      provenance: { source: "enr51" },
+    });
+    const merged = mergeCandidateAreas([a, b], [a2]);
+    expect(merged).toHaveLength(2);
+    expect(merged.find((x) => x.id === "ESR3")!.name).toBe("KALIX");
   });
 });

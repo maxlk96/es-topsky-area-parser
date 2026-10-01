@@ -31,7 +31,14 @@ import {
   redensifyBoundCircle,
   redensifyBoundCircleAuto,
 } from "@/lib/areas/coords";
-import { diffCandidates, sortDiffItems } from "@/lib/areas/diff";
+import {
+  diffCandidates,
+  diffSourceGroupKey,
+  diffSourceGroupLabel,
+  mergeCandidateAreas,
+  mergeDiffItems,
+  sortDiffItems,
+} from "@/lib/areas/diff";
 import { mergePcaAcceptPreservingLabel } from "@/lib/aip/parse-pca-echarts";
 import { activationLabel } from "@/lib/areas/activation";
 import {
@@ -223,6 +230,8 @@ export function Workspace() {
   const [selectedSups, setSelectedSups] = useState<Record<string, boolean>>({});
   const [diffs, setDiffs] = useState<DiffItem[]>([]);
   const [candidates, setCandidates] = useState<AreaRecord[]>([]);
+  /** Amber map overlay for verify/diff candidates (Map layers · DIFF). */
+  const [showDiffHighlight, setShowDiffHighlight] = useState(true);
 
   const setLayerVisible = useCallback((key: LayerKey, on: boolean) => {
     setLayerVisibility((prev) => ({ ...prev, [key]: on === true }));
@@ -387,17 +396,18 @@ export function Workspace() {
         }
         found.push(...(data.areas as AreaRecord[]));
       }
-      setCandidates(
-        found.filter(
-          (a) =>
-            a.exclusionReason !== "fir_border" &&
-            a.exclusionReason !== "uas_only" &&
-            (a.coordinates.length >= 3 || a.boundCircle),
-        ),
+      const drawable = found.filter(
+        (a) =>
+          a.exclusionReason !== "fir_border" &&
+          a.exclusionReason !== "uas_only" &&
+          (a.coordinates.length >= 3 || a.boundCircle),
       );
-      const items = diffCandidates(areas, found);
-      setDiffs(sortDiffItems(items));
-      toast.success(`Parsed ${found.length} candidate areas → ${items.length} diff rows`);
+      setCandidates((prev) => mergeCandidateAreas(prev, drawable));
+      const items = sortDiffItems(diffCandidates(areas, found));
+      setDiffs((prev) => mergeDiffItems(prev, items));
+      toast.success(
+        `Parsed ${found.length} SUP areas → +${items.length} diff rows (accumulated)`,
+      );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Parse failed");
     } finally {
@@ -429,16 +439,15 @@ export function Workspace() {
       if (!res.ok) throw new Error(data.error || "AIP reload failed");
       const all = data.areas as AreaRecord[];
       // Map overlay: only drawable geometry — FIR-border rows stay in diff as excluded.
-      setCandidates(
-        all.filter(
-          (a) =>
-            a.exclusionReason !== "fir_border" &&
-            a.exclusionReason !== "uas_only" &&
-            (a.coordinates.length >= 3 || a.boundCircle),
-        ),
+      const drawable = all.filter(
+        (a) =>
+          a.exclusionReason !== "fir_border" &&
+          a.exclusionReason !== "uas_only" &&
+          (a.coordinates.length >= 3 || a.boundCircle),
       );
+      setCandidates((prev) => mergeCandidateAreas(prev, drawable));
       const items = sortDiffItems(diffCandidates(areas, all));
-      setDiffs(items);
+      setDiffs((prev) => mergeDiffItems(prev, items));
       const nChanged = items.filter((i) => i.status === "changed").length;
       const nNew = items.filter((i) => i.status === "new").length;
       const nEx = items.filter((i) => i.status === "excluded").length;
@@ -447,7 +456,8 @@ export function Workspace() {
           ` (ENR ${data.enr51Count} · SUPs ${data.supParsed})` +
           (data.skippedUasSubject
             ? ` · skipped ${data.skippedUasSubject} UAS subject`
-            : ""),
+            : "") +
+          " · accumulated",
       );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "AIP reload failed");
@@ -471,17 +481,22 @@ export function Workspace() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "PCA reload failed");
       const all = data.areas as AreaRecord[];
-      setCandidates(all.filter((a) => a.coordinates.length >= 3));
+      setCandidates((prev) =>
+        mergeCandidateAreas(
+          prev,
+          all.filter((a) => a.coordinates.length >= 3),
+        ),
+      );
       // Turn PCA layers on so the overlay is visible after reload.
       setLayerVisibility((v) => ({ ...v, PCA: true, PCA_SUB: true }));
       const items = sortDiffItems(diffCandidates(areas, all));
-      setDiffs(items);
+      setDiffs((prev) => mergeDiffItems(prev, items));
       const nChanged = items.filter((i) => i.status === "changed").length;
       const nNew = items.filter((i) => i.status === "new").length;
       const nPresent = items.filter((i) => i.status === "present").length;
       toast.success(
         `PCA echarts: ${nChanged} changed · ${nNew} new · ${nPresent} present` +
-          ` (${data.mainCount} main · ${data.subCount} sub)`,
+          ` (${data.mainCount} main · ${data.subCount} sub) · accumulated`,
       );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "PCA reload failed");
@@ -558,8 +573,20 @@ export function Workspace() {
       else next.unshift(accepted);
       return next;
     });
-    setDiffs((d) => d.filter((x) => x.candidate.id !== item.candidate.id));
+    const dropId = item.candidate.id.toUpperCase();
+    setDiffs((d) =>
+      d.filter((x) => x.candidate.id.toUpperCase() !== dropId),
+    );
+    setCandidates((c) =>
+      c.filter((a) => a.id.toUpperCase() !== dropId),
+    );
     toast.success(`Accepted ${item.candidate.id}`);
+  };
+
+  const clearVerifyDiff = () => {
+    setDiffs([]);
+    setCandidates([]);
+    toast.message("Verify / diff cleared");
   };
 
   const applyCircleSpacing = (fid: string, spacingDeg: number) => {
@@ -633,6 +660,9 @@ export function Workspace() {
     );
     setDiffs((d) =>
       d.filter((x) => !acceptedIds.has(x.candidate.id.toUpperCase())),
+    );
+    setCandidates((c) =>
+      c.filter((a) => !acceptedIds.has(a.id.toUpperCase())),
     );
     toast.success(
       skippedMissingName
@@ -914,8 +944,8 @@ export function Workspace() {
               Reload from AIP → diff
             </Button>
             <p className="text-[10px] leading-snug text-slate-500">
-              Reloads ENR 5.1 + area SUPs into Verify/diff only — does not wipe OTHER /
-              unlabeled blocks. Accept is still per-row.
+              Reloads ENR 5.1 + area SUPs into Verify/diff (accumulates with PCA/SUP).
+              Does not wipe OTHER / unlabeled blocks. Accept is still per-row.
             </p>
             <Button
               size="sm"
@@ -928,8 +958,8 @@ export function Workspace() {
               Reload PCA (echarts) → diff
             </Button>
             <p className="text-[10px] leading-snug text-slate-500">
-              Reparse PCA + sub-parts from vatiris echarts. Accept updates geometry;
-              LABEL coordinates stay where they are.
+              Reparse PCA + sub-parts from vatiris echarts (accumulates in Verify/diff).
+              Accept updates geometry; LABEL coordinates stay where they are.
             </p>
             <Button
               size="sm"
@@ -1018,7 +1048,7 @@ export function Workspace() {
         <main className="relative min-h-[50vh] min-w-0">
           <AreaMap
             areas={areas}
-            candidates={candidates}
+            candidates={showDiffHighlight ? candidates : []}
             focusId={focusId}
             focusToken={focusToken}
             hoverKey={hoverKey}
@@ -1031,7 +1061,10 @@ export function Workspace() {
             layerVisibility={layerVisibility}
           />
           <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded-md bg-white/90 px-2 py-1 text-[11px] text-slate-600 shadow">
-            Red/gray = R/D 4F · Light fill + red border = R/D 3 · Yellow = TRA/PCA/CBA · Amber dashed = SUP candidate
+            Red/gray = R/D 4F · Light fill + red border = R/D 3 · Yellow = TRA/PCA/CBA
+            {showDiffHighlight
+              ? " · Amber dashed = verify/diff candidate"
+              : " · DIFF highlight off"}
           </div>
           {supViewer && (
             <div className="absolute inset-3 z-20 flex flex-col overflow-hidden rounded-lg border border-slate-300 bg-white shadow-xl">
@@ -1201,19 +1234,34 @@ export function Workspace() {
             );
           })()}
           <div className="min-w-0 overflow-x-hidden rounded-md border border-slate-200 bg-white px-2 py-2">
-            <button
-              type="button"
-              className="flex w-full min-w-0 items-center justify-between gap-2 text-left"
-              onClick={() => setLayersOpen((o) => !o)}
-              aria-expanded={layersOpen}
-            >
-              <p className="min-w-0 text-[11px] font-medium uppercase tracking-wide text-slate-500">
-                Map layers
-              </p>
-              <span className="shrink-0 text-slate-500" aria-hidden>
-                {layersOpen ? "▼" : "▶"}
-              </span>
-            </button>
+            <div className="flex w-full min-w-0 items-center justify-between gap-2">
+              <button
+                type="button"
+                className="flex min-w-0 flex-1 items-center justify-between gap-2 text-left"
+                onClick={() => setLayersOpen((o) => !o)}
+                aria-expanded={layersOpen}
+              >
+                <p className="min-w-0 text-[11px] font-medium uppercase tracking-wide text-slate-500">
+                  Map layers
+                </p>
+                <span className="shrink-0 text-slate-500" aria-hidden>
+                  {layersOpen ? "▼" : "▶"}
+                </span>
+              </button>
+              <label
+                className="flex shrink-0 items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-500"
+                title="Highlight verify/diff candidates on the map (amber)"
+              >
+                Diff
+                <span className="inline-flex size-4 shrink-0 overflow-hidden">
+                  <Checkbox
+                    checked={showDiffHighlight}
+                    onCheckedChange={(v) => setShowDiffHighlight(v === true)}
+                    aria-label="Show DIFF highlight on map"
+                  />
+                </span>
+              </label>
+            </div>
             {layersOpen && (
               <div className="mt-2 max-h-[28vh] space-y-2 overflow-x-hidden overflow-y-auto [scrollbar-gutter:stable]">
                 {LAYER_GROUPS.map((group) => {
@@ -1451,19 +1499,34 @@ export function Workspace() {
               <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
                 Verify / diff
               </p>
-              <Button
-                type="button"
-                size="sm"
-                variant="secondary"
-                className="h-7 px-2 text-xs"
-                disabled={
-                  !diffs.some((d) => d.status === "new" || d.status === "changed")
-                }
-                onClick={acceptAllDiffs}
-                title="Accept all new and changed candidates"
-              >
-                Accept all
-              </Button>
+              <div className="flex shrink-0 items-center gap-1">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 px-2 text-xs"
+                  disabled={!diffs.length && !candidates.length}
+                  onClick={clearVerifyDiff}
+                  title="Clear accumulated verify/diff (baseline reload also clears)"
+                >
+                  Clear
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  className="h-7 px-2 text-xs"
+                  disabled={
+                    !diffs.some(
+                      (d) => d.status === "new" || d.status === "changed",
+                    )
+                  }
+                  onClick={acceptAllDiffs}
+                  title="Accept all new and changed candidates"
+                >
+                  Accept all
+                </Button>
+              </div>
             </div>
             {diffs.length > 0 && (
               <p className="text-[11px] text-slate-500">
@@ -1474,13 +1537,18 @@ export function Workspace() {
                   })
                   .filter(Boolean)
                   .join(" · ")}
+                {" · accumulates across AIP / SUP / PCA"}
               </p>
             )}
           </div>
           <ScrollArea className="min-h-0 min-w-0 flex-1 overflow-x-hidden rounded-md border border-slate-200 bg-white">
             <ul className="divide-y divide-slate-100 text-sm">
-              {diffs.map((d) => {
+              {diffs.map((d, idx) => {
                 const fid = areaFeatureId(d.candidate);
+                const groupKey = diffSourceGroupKey(d);
+                const prevGroup =
+                  idx > 0 ? diffSourceGroupKey(diffs[idx - 1]!) : null;
+                const showGroupHeader = groupKey !== prevGroup;
                 const hovered = hoverIncludes(hoverKey, fid);
                 const selected = selectedKey === fid;
                 const supHref =
@@ -1495,18 +1563,26 @@ export function Workspace() {
                 const supFolder = d.candidate.provenance.amdtId || amdtId;
                 return (
                 <li
-                  key={d.candidate.id + d.status + fid}
+                  key={`${groupKey}:${d.candidate.id}:${d.status}:${fid}`}
                   data-area-fid={fid}
-                  className={`space-y-1 px-2 py-2 ${
-                    selected
-                      ? "bg-sky-100"
-                      : hovered
-                        ? "bg-sky-50"
-                        : ""
-                  }`}
+                  className="list-none"
                   onMouseEnter={() => setHoverKey(fid)}
                   onMouseLeave={() => setHoverKey(null)}
                 >
+                  {showGroupHeader ? (
+                    <p className="sticky top-0 z-[1] border-b border-slate-200 bg-slate-100 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-600">
+                      {diffSourceGroupLabel(groupKey)}
+                    </p>
+                  ) : null}
+                  <div
+                    className={`space-y-1 px-2 py-2 ${
+                      selected
+                        ? "bg-sky-100"
+                        : hovered
+                          ? "bg-sky-50"
+                          : ""
+                    }`}
+                  >
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge
                       variant={
@@ -1596,12 +1672,14 @@ export function Workspace() {
                       Accept
                     </Button>
                   )}
+                  </div>
                 </li>
                 );
               })}
               {!diffs.length && (
                 <li className="px-2 py-3 text-xs text-slate-500">
-                  Parse SUPs to populate New / Changed / Excluded / Duplicate rows.
+                  AIP → diff, Parse SUPs, and PCA reparse accumulate here. Clear or
+                  reload baseline to reset.
                 </li>
               )}
             </ul>

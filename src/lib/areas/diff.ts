@@ -126,14 +126,85 @@ const DIFF_STATUS_ORDER: Record<string, number> = {
   present: 5,
 };
 
-/** Put actionable rows first so AIP reload noise (present) sinks. */
+/** Coarse source groups for stacked verify/diff (AIP → SUP → PCA). */
+const DIFF_SOURCE_ORDER: Record<string, number> = {
+  enr51: 0,
+  enr52: 1,
+  sup: 2,
+  notam: 3,
+  vatiris_pca: 4,
+  topsky: 5,
+  manual: 6,
+};
+
+export function diffSourceGroupKey(
+  item: Pick<DiffItem, "candidate">,
+): string {
+  const s = item.candidate.provenance?.source || "other";
+  if (s === "enr51") return "enr51";
+  if (s === "enr52") return "enr52";
+  if (s === "sup" || s === "notam") return "sup";
+  if (s === "vatiris_pca") return "pca";
+  return s;
+}
+
+export function diffSourceGroupLabel(key: string): string {
+  switch (key) {
+    case "enr51":
+      return "ENR 5.1";
+    case "enr52":
+      return "ENR 5.2";
+    case "sup":
+      return "AIP SUP";
+    case "pca":
+      return "PCA (echarts)";
+    default:
+      return key;
+  }
+}
+
+/** Group by source, then actionable status first within each group. */
 export function sortDiffItems(items: DiffItem[]): DiffItem[] {
   return [...items].sort((a, b) => {
+    const sa =
+      DIFF_SOURCE_ORDER[a.candidate.provenance?.source || ""] ?? 9;
+    const sb =
+      DIFF_SOURCE_ORDER[b.candidate.provenance?.source || ""] ?? 9;
+    if (sa !== sb) return sa - sb;
     const oa = DIFF_STATUS_ORDER[a.status] ?? 9;
     const ob = DIFF_STATUS_ORDER[b.status] ?? 9;
     if (oa !== ob) return oa - ob;
     return a.candidate.id.localeCompare(b.candidate.id);
   });
+}
+
+/**
+ * Accumulate verify/diff rows: newer batch upserts by designator
+ * (same id replaced; other sources kept). Always re-sort.
+ */
+export function mergeDiffItems(
+  previous: DiffItem[],
+  incoming: DiffItem[],
+): DiffItem[] {
+  const byId = new Map<string, DiffItem>();
+  for (const d of previous) {
+    byId.set(normalizeDesignator(d.candidate.id), d);
+  }
+  for (const d of incoming) {
+    byId.set(normalizeDesignator(d.candidate.id), d);
+  }
+  return sortDiffItems([...byId.values()]);
+}
+
+/** Same upsert for map amber candidate overlays. */
+export function mergeCandidateAreas(
+  previous: AreaRecord[],
+  incoming: AreaRecord[],
+): AreaRecord[] {
+  const byId = new Map<string, AreaRecord>();
+  for (const a of previous) byId.set(normalizeDesignator(a.id), a);
+  for (const a of incoming) byId.set(normalizeDesignator(a.id), a);
+  return [...byId.values()].sort((a, b) => a.id.localeCompare(b.id));
 }
 
 export function diffCandidates(
