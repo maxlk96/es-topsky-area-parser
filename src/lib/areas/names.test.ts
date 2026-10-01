@@ -3,6 +3,7 @@ import {
   cleanCommentName,
   isDesignatorOnlyName,
   resolveAreaName,
+  sanitizePlaceName,
 } from "./names";
 
 describe("area names", () => {
@@ -27,5 +28,18 @@ describe("area names", () => {
     });
     expect(r.name).toBe("RINGENÄS");
     expect(r.fromAip).toBe(true);
+  });
+
+  it("fixes corrupt LABEL NYN<äSHAMN using //ES comment", () => {
+    expect(sanitizePlaceName("NYN<\xe4SHAMN")).toBe("NYN\xe4SHAMN");
+    const r = resolveAreaName({
+      labelText: "NYN<\xe4SHAMN",
+      commentName: "Nynäshamn",
+      shortName: "R117",
+      id: "ESR117",
+    });
+    expect(r.name).toBe("NYNÄSHAMN");
+    expect(r.fixedCorruption).toBe(true);
+    expect(r.name).not.toMatch(/</);
   });
 });

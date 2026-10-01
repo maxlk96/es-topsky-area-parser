@@ -8,6 +8,7 @@ import {
   isDesignatorOnlyName,
   resolveAreaName,
 } from "./names";
+import { patchNameInBlock } from "./write-topsky";
 import type { AreaRecord, ParseResult } from "./types";
 
 function bytesToLatin1(bytes: Uint8Array): string {
@@ -98,8 +99,11 @@ export function parseTopSkyText(text: string, encoding = "latin1"): ParseResult 
         : undefined;
 
     const end = cur.start + cur.lines.length;
-    // raw block reconstructed from collected lines
-    const rawBlock = cur.lines.join("\n");
+    let rawBlock = cur.lines.join("\n");
+    // Fix corrupt LABEL text in-block (e.g. NYN<\xe4SHAMN) so export writes clean name.
+    if (resolved.fixedCorruption && label) {
+      rawBlock = patchNameInBlock(rawBlock, id, resolved.name, label);
+    }
 
     areas.push({
       id,
@@ -120,6 +124,9 @@ export function parseTopSkyText(text: string, encoding = "latin1"): ParseResult 
         rawComment: cur.commentName || undefined,
       },
       needsReview,
+      // Mark edited so whole-file LABEL patch runs on export for the corruption fix.
+      nameEdited: resolved.fixedCorruption || undefined,
+      labelEdited: resolved.fixedCorruption && label ? true : undefined,
       rawBlock,
       section: inTempo ? "tempo" : "other",
     });

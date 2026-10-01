@@ -57,6 +57,16 @@ N059.00.00.000 E018.00.00.000
 N059.01.00.000 E018.00.00.000
 N059.01.00.000 E018.01.00.000
 N059.00.00.000 E018.00.00.000
+
+//ESR117 Nynäshamn
+AREA:3:  R117
+ACTIVE:1
+LABEL:N058.55.23.000:E017.58.04.000:NYN<\xe4SHAMN
+LIMITS:0:14
+N058.55.55.000 E017.58.04.000
+N058.55.54.623 E017.58.09.361
+N058.55.53.000 E017.58.04.000
+N058.55.55.000 E017.58.04.000
 `;
 
 describe("parseTopSkyText", () => {
@@ -95,5 +105,14 @@ describe("parseTopSkyText", () => {
     const r999 = areas.find((a) => a.id === "ESR999")!;
     expect(r999.name).toBe("R999");
     expect(r999.needsReview).toBe("missing_name");
+  });
+
+  it("fixes R117 corrupt LABEL to NYNÄSHAMN from //ES comment", () => {
+    const { areas } = parseTopSkyText(SAMPLE);
+    const r117 = areas.find((a) => a.id === "ESR117")!;
+    expect(r117.name).toBe("NYNÄSHAMN");
+    expect(r117.label?.text).toBe("NYNÄSHAMN");
+    expect(r117.rawBlock).toMatch(/LABEL:[^:\n]+:[^:\n]+:NYNÄSHAMN/);
+    expect(r117.rawBlock).not.toMatch(/NYN</);
   });
 });
