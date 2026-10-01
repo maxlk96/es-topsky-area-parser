@@ -1,8 +1,15 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { Map as MapLibreMap, NavigationControl, type GeoJSONSource } from "maplibre-gl";
+import {
+  Map as MapLibreMap,
+  NavigationControl,
+  setWorkerUrl,
+  type GeoJSONSource,
+} from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
+
+setWorkerUrl("/maplibre-gl-worker.mjs");
 import { mapStyleFor } from "@/lib/areas/classify";
 import type { AreaRecord } from "@/lib/areas/types";
 
