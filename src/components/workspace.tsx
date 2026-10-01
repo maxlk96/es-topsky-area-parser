@@ -466,13 +466,19 @@ export function Workspace() {
         section: item.candidate.section ?? "tempo",
         mapDefaultVisible: true,
       };
-      // Circles: always densify at auto Spacing° from radius (tweakable after Accept).
+      // Circles: densify at auto Spacing°; LABEL stays on BOUND:C centre.
       if (accepted.boundCircle) {
         const red = redensifyBoundCircleAuto(accepted.boundCircle);
+        const c = accepted.boundCircle;
         accepted = {
           ...accepted,
           coordinates: red.coordinates,
           circleSpacingDeg: red.circleSpacingDeg,
+          label: {
+            lat: c.lat,
+            lon: c.lon,
+            text: accepted.label?.text || accepted.name,
+          },
           rawBlock: "",
         };
       }
@@ -489,11 +495,22 @@ export function Workspace() {
       prev.map((a) => {
         if (areaFeatureId(a) !== fid || !a.boundCircle) return a;
         const red = redensifyBoundCircle(a.boundCircle, spacingDeg);
+        const c = a.boundCircle;
+        // Keep LABEL on circle centre unless user already nudged it.
+        const label =
+          a.label && a.labelEdited
+            ? a.label
+            : {
+                lat: c.lat,
+                lon: c.lon,
+                text: a.label?.text || a.name,
+              };
         return {
           ...a,
           coordinates: red.coordinates,
           circleSpacingDeg: red.circleSpacingDeg,
-          // Force rewrite of geometry on export (rawBlock would preserve old ring).
+          label,
+          // Force rewrite of geometry (+ LABEL) on export.
           rawBlock: "",
         };
       }),
@@ -535,10 +552,16 @@ export function Workspace() {
         };
         if (accepted.boundCircle) {
           const red = redensifyBoundCircleAuto(accepted.boundCircle);
+          const c = accepted.boundCircle;
           accepted = {
             ...accepted,
             coordinates: red.coordinates,
             circleSpacingDeg: red.circleSpacingDeg,
+            label: {
+              lat: c.lat,
+              lon: c.lon,
+              text: accepted.label?.text || accepted.name,
+            },
             rawBlock: "",
           };
         }

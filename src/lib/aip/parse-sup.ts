@@ -5,8 +5,8 @@ import {
   isUasOnlyText,
   shortFromDesignator,
 } from "@/lib/areas/classify";
+import { expandAipLateralCoords } from "@/lib/areas/arcs";
 import {
-  closeRing,
   densifyCircle,
   autoSpacingForRadius,
   parseCompactCoord,
@@ -129,26 +129,21 @@ export function extractAreaSections(text: string): AreaSection[] {
   return [...byId.values()];
 }
 
-function parseCoordsFromChunk(chunk: string): [number, number][] {
-  const tokens = [
-    ...chunk.matchAll(/(\d{6,7}(?:\.\d+)?[NS]\s+\d{7,8}(?:\.\d+)?[EW])/gi),
-  ].map((m) => m[1]);
-  const coordinates: [number, number][] = [];
-  for (const tok of tokens) {
-    const c = parseCompactCoord(tok.replace(/\s+/g, " "));
-    if (c) coordinates.push([c.lon, c.lat]);
-  }
-  return closeRing(coordinates);
-}
-
 function parseCircleFromChunk(chunk: string): AreaRecord["boundCircle"] {
+  // Full circle only — partial arcs use expandAipLateralCoords.
+  if (/along\s+an\s+arc\s+of/i.test(chunk)) return undefined;
   const circle = chunk.match(
-    /circle with radius\s+([\d.]+)\s*NM\s+centr(?:ed|ered)\s+on\s+(\d{6,7}[NS])\s+(\d{7,8}[EW])/i,
+    /circle with radius\s+([\d.]+)\s*(NM|nm|m|metres|meters)?\s*centr(?:ed|ered)\s+on\s+(\d{6,7}[NS])\s+(\d{7,8}[EW])/i,
   );
   if (!circle) return undefined;
-  const c = parseCompactCoord(`${circle[2]} ${circle[3]}`);
-  const radiusNm = Number(circle[1]);
-  if (!c || Number.isNaN(radiusNm)) return undefined;
+  const c = parseCompactCoord(`${circle[3]} ${circle[4]}`);
+  if (!c) return undefined;
+  let radiusNm = Number(circle[1]);
+  if (Number.isNaN(radiusNm)) return undefined;
+  const unit = (circle[2] || "NM").toLowerCase();
+  if (unit === "m" || unit.startsWith("metre") || unit.startsWith("meter")) {
+    radiusNm = radiusNm / 1852;
+  }
   return { lat: c.lat, lon: c.lon, radiusNm };
 }
 
@@ -217,7 +212,7 @@ function buildAreaFromSection(
     };
   }
 
-  let coordinates = parseCoordsFromChunk(section.chunk);
+  let coordinates = expandAipLateralCoords(section.chunk);
   const boundCircle = parseCircleFromChunk(section.chunk);
   let circleSpacingDeg: number | undefined;
   if (boundCircle && coordinates.length < 3) {
@@ -239,7 +234,14 @@ function buildAreaFromSection(
   const useAup = flyingSup || inferred.reason === "flying_or_ats_permission";
 
   let label: AreaRecord["label"];
-  if (coordinates.length >= 3) {
+  // Full circles: LABEL at centre, not densified-ring centroid.
+  if (boundCircle) {
+    label = {
+      lat: boundCircle.lat,
+      lon: boundCircle.lon,
+      text: name,
+    };
+  } else if (coordinates.length >= 3) {
     try {
       const poly = polygon([coordinates]);
       const c = centroid(poly);
@@ -251,12 +253,6 @@ function buildAreaFromSection(
     } catch {
       /* ignore invalid rings for label */
     }
-  } else if (boundCircle) {
-    label = {
-      lat: boundCircle.lat,
-      lon: boundCircle.lon,
-      text: name,
-    };
   }
 
   return {

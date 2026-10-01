@@ -5,8 +5,8 @@ import {
   isUasOnlyText,
   shortFromDesignator,
 } from "@/lib/areas/classify";
+import { expandAipLateralCoords } from "@/lib/areas/arcs";
 import {
-  closeRing,
   densifyCircle,
   autoSpacingForRadius,
   parseCompactCoord,
@@ -33,19 +33,9 @@ function stripHtml(html: string): string {
     .replace(/\n\s*\n+/g, "\n");
 }
 
-function parseCoords(chunk: string): [number, number][] {
-  const tokens = [
-    ...chunk.matchAll(/(\d{6,7}(?:\.\d+)?[NS]\s+\d{7,8}(?:\.\d+)?[EW])/gi),
-  ].map((m) => m[1]);
-  const coordinates: [number, number][] = [];
-  for (const tok of tokens) {
-    const c = parseCompactCoord(tok.replace(/\s+/g, " "));
-    if (c) coordinates.push([c.lon, c.lat]);
-  }
-  return closeRing(coordinates);
-}
-
 function parseCircle(chunk: string): AreaRecord["boundCircle"] {
+  // Full circle only — partial "along an arc" is handled by expandAipLateralCoords.
+  if (/along\s+an\s+arc\s+of/i.test(chunk)) return undefined;
   // ENR often uses metres: "circle with radius 1000 m centred on 585523N 0175804E"
   const m = chunk.match(
     /circle with radius\s+([\d.]+)\s*(NM|nm|m|metres|meters)?\s*centr(?:ed|ered)\s+on\s+(\d{6,7}[NS])\s+(\d{7,8}[EW])/i,
@@ -124,7 +114,8 @@ export function parseEnr51Html(
       continue;
     }
 
-    let coordinates = parseCoords(chunk);
+    // Partial arcs densify between bearings; plain polygons pass through.
+    let coordinates = expandAipLateralCoords(chunk);
     const boundCircle = parseCircle(chunk);
     let circleSpacingDeg: number | undefined;
     if (boundCircle && coordinates.length < 3) {
@@ -180,7 +171,14 @@ export function parseEnr51Html(
     const noaiw = areaTypeCode === "4F";
 
     let label: AreaRecord["label"];
-    if (coordinates.length >= 3) {
+    // Full circles: LABEL at BOUND:C centre (not densified-ring centroid).
+    if (boundCircle) {
+      label = {
+        lat: boundCircle.lat,
+        lon: boundCircle.lon,
+        text: nameUp,
+      };
+    } else if (coordinates.length >= 3) {
       try {
         const poly = polygon([coordinates]);
         const c = centroid(poly);
@@ -192,12 +190,6 @@ export function parseEnr51Html(
       } catch {
         /* ignore */
       }
-    } else if (boundCircle) {
-      label = {
-        lat: boundCircle.lat,
-        lon: boundCircle.lon,
-        text: nameUp,
-      };
     }
 
     seen.add(id);

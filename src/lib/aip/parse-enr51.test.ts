@@ -110,6 +110,41 @@ Special permission by Swedish Transport Agency.
     const r130 = areas.find((a) => a.id === "ESR130")!;
     expect(r130.limits).toEqual([4, 12]);
   });
+
+  it("partial arcs densify (ESR34 / ESR15A); full-circle LABEL at centre", () => {
+    const html = `
+<html><body>
+ESR34 RAVLUNDA
+555623N 0142228E clockwise along an arc of 14.3 NM radius centred on 554402N 0140944E -
+553407N 0142753E - 554325N 0141146E - 554319N 0140919E - 554514N 0140819E -
+554609N 0140954E - 554544N 0141144E to point of origin.
+17000 ft AMSL
+GND
+Military activities including aviation operations.
+ESR15A VÄDDÖ
+600816N 0185039E clockwise along an arc of 12 NM radius centred on 595632N 0185332E -
+595038N 0191356E - 595632N 0185332E to point of origin.
+40500 ft AMSL
+GND
+Military activities including aviation operations.
+ESR117 NYNÄSHAMN
+A circle with radius 1000 m centred on 585523N 0175804E.
+1400 ft AMSL
+GND
+Oil refinery.
+</body></html>`;
+    const areas = parseEnr51Html(html, { amdtId: "test-amdt" });
+    const r34 = areas.find((a) => a.id === "ESR34")!;
+    const r15a = areas.find((a) => a.id === "ESR15A")!;
+    const r117 = areas.find((a) => a.id === "ESR117")!;
+    expect(r34.boundCircle).toBeUndefined();
+    expect(r34.coordinates.length).toBeGreaterThan(12);
+    expect(r15a.boundCircle).toBeUndefined();
+    expect(r15a.coordinates.length).toBeGreaterThan(8);
+    expect(r117.boundCircle).toBeTruthy();
+    expect(r117.label?.lat).toBeCloseTo(r117.boundCircle!.lat, 5);
+    expect(r117.label?.lon).toBeCloseTo(r117.boundCircle!.lon, 5);
+  });
 });
 
 describe("mergeAipReloadCandidates", () => {
