@@ -202,6 +202,8 @@ export function diffCandidates(
           ? `SUP ${normalized.provenance.supNumber}`
           : "AIP SUP",
       );
+    } else if (normalized.provenance.source === "vatiris_pca") {
+      notes.push("vatiris echarts PCA");
     }
     if (
       (normalized.category === "R" || normalized.category === "D") &&

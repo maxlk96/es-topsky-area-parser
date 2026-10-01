@@ -103,9 +103,10 @@ function findAreaBlock(
     start = m.index;
   }
   const rest = text.slice(start);
-  // Stop at next //ES… designator OR tempo section markers (not "//      START…").
+  // Stop at next area designator (//ESR… or PCA //A1) OR tempo section markers.
   const ends = [
     rest.search(/\n\/\/ES[A-Z0-9]/i),
+    rest.search(/\n\/\/[A-Z]+\d+[A-Z]?\b/i), // PCA //A1 / //A11
     rest.search(/\n\/\/\s*START OF TEMPO/i),
     rest.search(/\n\/\/\s*END OF TEMPO/i),
   ].filter((n) => n >= 0);
@@ -130,10 +131,14 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** True when Accept/AIP/redensify cleared rawBlock — full block must be rewritten on export. */
+/** True when Accept/AIP/PCA/redensify cleared rawBlock — full block must be rewritten on export. */
 export function needsFullBlockRewrite(area: AreaRecord): boolean {
   if (area.exclusionReason) return false;
-  if (!(area.category === "R" || area.category === "D")) return false;
+  const rewritable =
+    area.category === "R" ||
+    area.category === "D" ||
+    area.category === "PCA";
+  if (!rewritable) return false;
   // Omit-label areas with an active LABEL still in rawBlock must be rewritten.
   if (
     areaOmitsLabel(area) &&
@@ -144,13 +149,13 @@ export function needsFullBlockRewrite(area: AreaRecord): boolean {
   }
   // Untouched baseline: keep rawBlock as-is (label/name patched separately).
   if (area.provenance.source === "topsky" && area.rawBlock) return false;
-  // Accepted ENR/SUP, regenerated circles, or any empty-rawBlock working copy.
+  // Accepted ENR/SUP/PCA, regenerated circles, or any empty-rawBlock working copy.
   return !area.rawBlock || area.provenance.source !== "topsky";
 }
 
 /**
- * Replace permanent (non-tempo) R/D blocks with accepted AIP/ENR geometry.
- * Tempo is handled by mergeTempoSection; this covers Reload-from-AIP Accepts
+ * Replace permanent (non-tempo) R/D/PCA blocks with accepted AIP/echarts geometry.
+ * Tempo is handled by mergeTempoSection; this covers Reload-from-AIP / PCA Accepts
  * that stay in section "other".
  */
 export function applyAcceptedAreaBlocks(
@@ -165,7 +170,7 @@ export function applyAcceptedAreaBlocks(
 
   for (const area of toWrite) {
     const found = findAreaBlock(text, area);
-    // Permanent ENR section: no SUP Valid-to headers.
+    // Permanent / PCA section: no SUP Valid-to headers.
     const block = formatAreaBlock(area, { includeSupHeader: false }).trimEnd() + "\n";
     if (!found) {
       missing.push(area);
@@ -178,16 +183,38 @@ export function applyAcceptedAreaBlocks(
   }
 
   if (missing.length) {
-    const insertBlocks =
-      missing
-        .map((a) => formatAreaBlock(a, { includeSupHeader: false }).trimEnd())
-        .join("\n\n") + "\n\n";
-    const tempoMark = text.indexOf("START OF TEMPO R AND D AREAS");
-    if (tempoMark >= 0) {
-      const lineStart = text.lastIndexOf("\n", tempoMark) + 1;
-      text = text.slice(0, lineStart) + insertBlocks + text.slice(lineStart);
-    } else {
-      text = text.trimEnd() + "\n\n" + insertBlocks;
+    const pcaMissing = missing.filter((a) => a.category === "PCA");
+    const otherMissing = missing.filter((a) => a.category !== "PCA");
+
+    if (pcaMissing.length) {
+      const insertBlocks =
+        pcaMissing
+          .map((a) => formatAreaBlock(a, { includeSupHeader: false }).trimEnd())
+          .join("\n\n") + "\n\n";
+      const pcaMark = text.indexOf("MILITARY EXERCISE AREAS (PCA)");
+      if (pcaMark >= 0) {
+        // After the PCA section banner / following //// rule lines.
+        const afterBanner = text.indexOf("\n//", pcaMark + 1);
+        const insertAt =
+          afterBanner >= 0 ? text.indexOf("\n", afterBanner + 1) + 1 : pcaMark;
+        text = text.slice(0, insertAt) + insertBlocks + text.slice(insertAt);
+      } else {
+        text = text.trimEnd() + "\n\n" + insertBlocks;
+      }
+    }
+
+    if (otherMissing.length) {
+      const insertBlocks =
+        otherMissing
+          .map((a) => formatAreaBlock(a, { includeSupHeader: false }).trimEnd())
+          .join("\n\n") + "\n\n";
+      const tempoMark = text.indexOf("START OF TEMPO R AND D AREAS");
+      if (tempoMark >= 0) {
+        const lineStart = text.lastIndexOf("\n", tempoMark) + 1;
+        text = text.slice(0, lineStart) + insertBlocks + text.slice(lineStart);
+      } else {
+        text = text.trimEnd() + "\n\n" + insertBlocks;
+      }
     }
   }
 
@@ -253,18 +280,35 @@ export function formatAreaBlock(
   }
   const designator = area.id.toUpperCase();
   const labelText = toTopSkyName(area.label?.text || area.name);
-  lines.push(`//${designator} ${labelText}`);
-  // Two leading spaces for R/D AMS sort
+  // PCA headers in ESAA are bare `//A1` (name lives on LABEL).
+  if (area.category === "PCA") {
+    lines.push(`//${designator}`);
+  } else {
+    lines.push(`//${designator} ${labelText}`);
+  }
+  // Two leading spaces for R/D AMS sort; one space for PCA.
   const pad =
     area.category === "R" || area.category === "D" ? "  " : area.category === "PCA" ? " " : "";
   lines.push(`AREA:${area.areaTypeCode}:${pad}${area.shortName}`);
   if (area.noaiw) lines.push("NOAIW");
+  // Preserve extra ops flags (PCA often has NOAPW / NOSAP).
+  for (const d of area.directives || []) {
+    const t = d.trim().toUpperCase();
+    if (!t || t === "NOAIW") continue;
+    if (/^(NOAPW|NOSAP|NOMSAW|NOCLAMRAM|NOTCT)\b/.test(t)) {
+      lines.push(t.split(/\s+/)[0]!);
+    }
+  }
   if (area.activation?.type === "AUP" && area.activation.key) {
     lines.push(`ACTIVE:AUP:${area.activation.key}`);
   } else if (area.activation?.type === "AUP_GROUP" && area.activation.key) {
     lines.push(`ACTIVE:AUP_GROUP:${area.activation.key}`);
   } else if (area.activation?.type === "ALWAYS") {
     lines.push("ACTIVE:1");
+  } else if (area.activation?.type === "SCHEDULE" && area.activation.raw?.length) {
+    for (const r of area.activation.raw) {
+      if (/^ACTIVE:/i.test(r.trim())) lines.push(r.trim());
+    }
   }
   // MANUAL / NONE → no ACTIVE line
   if (areaOmitsLabel(area)) {

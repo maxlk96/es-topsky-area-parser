@@ -32,6 +32,7 @@ import {
   redensifyBoundCircleAuto,
 } from "@/lib/areas/coords";
 import { diffCandidates, sortDiffItems } from "@/lib/areas/diff";
+import { mergePcaAcceptPreservingLabel } from "@/lib/aip/parse-pca-echarts";
 import { activationLabel } from "@/lib/areas/activation";
 import { areaOmitsLabel, mentionsUasActivity } from "@/lib/areas/classify";
 import { parseTopSkyBuffer } from "@/lib/areas/parse-topsky";
@@ -450,10 +451,51 @@ export function Workspace() {
     }
   };
 
+  /**
+   * Reload PCA + PCA sub-parts from vatiris echarts WFS, diff vs baseline.
+   * Accept updates geometry only — existing LABEL coordinates are kept.
+   */
+  const reloadPcaFromEcharts = async () => {
+    if (!areas.length) {
+      toast.error("Load a TopSkyAreas baseline (GitHub or local) first");
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch("/api/pca/reload", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "PCA reload failed");
+      const all = data.areas as AreaRecord[];
+      setCandidates(all.filter((a) => a.coordinates.length >= 3));
+      // Turn PCA layers on so the overlay is visible after reload.
+      setLayerVisibility((v) => ({ ...v, PCA: true, PCA_SUB: true }));
+      const items = sortDiffItems(diffCandidates(areas, all));
+      setDiffs(items);
+      const nChanged = items.filter((i) => i.status === "changed").length;
+      const nNew = items.filter((i) => i.status === "new").length;
+      const nPresent = items.filter((i) => i.status === "present").length;
+      toast.success(
+        `PCA echarts: ${nChanged} changed · ${nNew} new · ${nPresent} present` +
+          ` (${data.mainCount} main · ${data.subCount} sub)`,
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "PCA reload failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const buildAcceptedArea = (
     candidate: AreaRecord,
     existing?: AreaRecord,
   ): AreaRecord => {
+    // PCA echarts reparse: update geometry, never move existing LABEL coords.
+    if (
+      candidate.category === "PCA" ||
+      candidate.provenance.source === "vatiris_pca"
+    ) {
+      return mergePcaAcceptPreservingLabel(candidate, existing);
+    }
     // Keep permanent vs tempo placement from baseline when overwriting.
     const section =
       existing?.section ??
@@ -845,6 +887,20 @@ export function Workspace() {
             <p className="text-[10px] leading-snug text-slate-500">
               Reloads ENR 5.1 + area SUPs into Verify/diff only — does not wipe OTHER /
               unlabeled blocks. Accept is still per-row.
+            </p>
+            <Button
+              size="sm"
+              variant="outline"
+              className="w-full"
+              onClick={reloadPcaFromEcharts}
+              disabled={!areas.length || loading}
+              title="vatiris echarts EXEA/EXES → diff; Accept keeps existing LABEL positions"
+            >
+              Reload PCA (echarts) → diff
+            </Button>
+            <p className="text-[10px] leading-snug text-slate-500">
+              Reparse PCA + sub-parts from vatiris echarts. Accept updates geometry;
+              LABEL coordinates stay where they are.
             </p>
             <Button
               size="sm"
@@ -1455,7 +1511,9 @@ export function Workspace() {
                       ? " · ENR 5.1"
                       : d.candidate.provenance.source === "sup"
                         ? " · SUP"
-                        : ""}
+                        : d.candidate.provenance.source === "vatiris_pca"
+                          ? " · echarts PCA"
+                          : ""}
                     {d.candidate.limits
                       ? ` · LIMITS ${d.candidate.limits.join(":")}`
                       : ""}

@@ -46,10 +46,11 @@ npm start         # serve production build on :43127
 
 1. **Load GitHub** (`main` `OTHER/TopSkyAreas.txt`) or a **local** areas file (becomes session baseline).
 2. Fetch **AMDT** list from LFV eAIP → pick Currently Effective → **Scan SUPs**.
-3. Select temporary R/D SUPs → **Parse → diff**, **or** use **Reload from AIP → diff** (ENR 5.1 permanent R/D + likely tempo SUPs vs baseline). Areas with *along the FIR BDRY* lateral limits are excluded from reparse (manual geometry only).
-4. **Accept** into the working copy → **Export** `TopSkyAreas.txt` (Latin-1; expired tempo removed when validity is known).
-5. Optional: **Rename** in the areas list (button or double-click) to fix display name / LABEL text (e.g. R41A → RINGENÄS); Export updates `//ES… NAME` and existing `LABEL:` text (never invents LABEL on unlabeled blocks).
-6. Optional: enable **Label placer** (right panel) → drag existing LABELs on the map → Export writes updated `LABEL:` lines (unlabeled areas stay unlabeled).
+3. Select temporary R/D SUPs → **Parse → diff**, **or** use **Reload from AIP → diff** (ENR 5.1 published R/D + likely tempo SUPs vs baseline). Areas with *along the FIR BDRY* lateral limits are excluded from reparse (manual geometry only).
+4. Optional: **Reload PCA (echarts) → diff** — vatiris EXEA/EXES geometry vs baseline; **Accept keeps existing LABEL positions**.
+5. **Accept** into the working copy → **Export** `TopSkyAreas.txt` (Latin-1; expired tempo removed when validity is known).
+6. Optional: **Rename** in the areas list (button or double-click) to fix display name / LABEL text (e.g. R41A → RINGENÄS); Export updates `//ES… NAME` and existing `LABEL:` text (never invents LABEL on unlabeled blocks).
+7. Optional: enable **Label placer** (right panel) → drag existing LABELs on the map → Export writes updated `LABEL:` lines (unlabeled areas stay unlabeled).
 
 ## Domain rules (summary)
 
