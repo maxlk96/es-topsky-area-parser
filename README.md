@@ -62,11 +62,24 @@ npm start         # serve production build on :43127
 
 See Project docs / plan for full taxonomy, HMI colours, and TopSky Developer Guide notes.
 
-## Deploy
+## Deploy (Proxmox / Docker — recommended)
 
-This app uses **Next.js Route Handlers** (LFV eAIP proxy, TopSky fetch, basemap tiles, PCA reload). **GitHub Pages is static-only** and cannot run those API routes.
+This app uses **Next.js Route Handlers** (LFV eAIP proxy, TopSky fetch, basemap tiles, PCA reload). It needs a **Node server**, not static hosting (GitHub Pages alone will not work).
 
-Recommended: deploy the full Next.js app to **Vercel** or **Cloudflare (OpenNext)** from the GitHub repo. A starter workflow is in `.github/workflows/deploy-vercel.yml` (needs a Vercel project + secrets). For a pure static mirror of the UI without AIP ingest, Pages is not sufficient for the maintainer workflow.
+**Self-host on Proxmox** (LXC or VM with Docker) — no Vercel account:
+
+```bash
+git clone https://github.com/maxlk96/es-topsky-area-parser.git
+cd es-topsky-area-parser
+cp .env.example .env          # optional CARTO_API_KEY
+docker compose up -d --build
+```
+
+App listens on port **43127** (`http://<host-ip>:43127`). Details: [docs/deploy-proxmox.md](docs/deploy-proxmox.md).
+
+Production without Docker: `npm ci && npm run build && npm start` (same port).
+
+Optional: `.github/workflows/deploy-vercel.yml` exists if you later want Vercel (`ENABLE_VERCEL_DEPLOY` + secrets).
 
 ## Stack
 

@@ -1,0 +1,17 @@
+# Proxmox LXC / VM (or any Docker host):
+#   cp .env.example .env   # optional CARTO_API_KEY (Compose loads .env for ${...})
+#   docker compose up -d --build
+# App: http://<host>:43127
+services:
+  app:
+    build: .
+    image: es-topsky-area-parser:local
+    container_name: es-topsky-area-parser
+    ports:
+      - "${PORT:-43127}:43127"
+    environment:
+      PORT: "43127"
+      HOSTNAME: "0.0.0.0"
+      # Optional — basemap still works without it (unauthenticated CARTO fallback)
+      CARTO_API_KEY: ${CARTO_API_KEY:-}
+    restart: unless-stopped
